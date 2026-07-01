@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>menasim WA support - Web tester</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <div class="chat-wrap">
+    <header class="chat-header">
+      <div class="brand">
+        <span class="dot"></span>
+        <div>
+          <div class="title">menasim support</div>
+          <div class="subtitle">eSIM AI assistant · web tester</div>
+        </div>
+      </div>
+      <a href="/inbox" class="link">Agent inbox</a>
+    </header>
+
+    <main id="messages" class="messages">
+      <div class="msg assistant">
+        <div class="bubble">Hi! I'm the menasim eSIM assistant. Ask me how to install your eSIM,
+        check your order, or resend your QR. مرحبًا! اسألني عن تركيب شريحتك أو حالة طلبك.</div>
+      </div>
+    </main>
+
+    <form id="composer" class="composer">
+      <input id="input" type="text" placeholder="Type a message… / اكتب رسالتك…" autocomplete="off" />
+      <button type="button" id="imgBtn" title="Simulate sending an image">IMG</button>
+      <button type="submit" id="sendBtn">Send</button>
+    </form>
+  </div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

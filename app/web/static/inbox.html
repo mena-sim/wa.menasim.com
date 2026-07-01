@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>menasim support - Agent inbox</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <div class="inbox-wrap">
+    <header class="inbox-header">
+      <h1>Agent inbox</h1>
+      <div class="inbox-actions">
+        <label>Status
+          <select id="statusFilter">
+            <option value="open">Open</option>
+            <option value="resolved">Resolved</option>
+            <option value="all">All</option>
+          </select>
+        </label>
+        <a href="/" class="link">Back to chat tester</a>
+      </div>
+    </header>
+    <div class="inbox-body">
+      <aside class="ticket-list" id="ticketList"></aside>
+      <section class="ticket-detail" id="ticketDetail">
+        <p class="muted">Select a ticket to view the conversation.</p>
+      </section>
+    </div>
+  </div>
+  <script src="/static/inbox.js"></script>
+</body>
+</html>
