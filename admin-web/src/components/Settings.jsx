@@ -15,6 +15,7 @@ const TABS = [
 const BUILTIN_SKILLS = [
   "Search knowledge base",
   "Look up order status",
+  "Check eSIM data usage (ICCID)",
   "Check eSIM activation status",
   "Resend QR code",
   "Escalate to a human agent",

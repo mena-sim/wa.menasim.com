@@ -19,11 +19,37 @@ def test_tool_schemas_exposed():
     assert {
         "kb_search",
         "order_lookup",
+        "check_esim_usage",
         "esim_status",
         "resend_qr",
         "escalate",
         "refund_ticket",
     } <= names
+
+
+def test_check_esim_usage_parses_html():
+    from app.agent.tools.check_esim_usage import _parse_usage_html
+
+    html = (
+        "<table><tr><td>remaining</td><td>1500</td></tr>"
+        "<tr><td>total</td><td>5000</td></tr>"
+        "<tr><td>status</td><td>ACTIVE</td></tr></table>"
+    )
+    rows = _parse_usage_html(html)
+    assert rows["remaining"] == "1500"
+    assert rows["status"] == "ACTIVE"
+
+
+def test_check_esim_usage_requires_verification(db):
+    from app.agent.tools import ToolContext, execute_tool
+    from app.models.conversation import Conversation
+
+    convo = Conversation(channel="whatsapp", sender_id="+100", language="en")
+    db.add(convo)
+    db.commit()
+    ctx = ToolContext(db=db, conversation=convo, language="en")
+    result = execute_tool("check_esim_usage", {"iccid": "8931086826051301003"}, ctx)
+    assert result.get("verified") is False
 
 
 def test_telnyx_webhook_skips_without_public_key(db):

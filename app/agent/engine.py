@@ -168,10 +168,12 @@ def handle_message(
     user_text = user_content
     if is_image:
         note = (
-            "\n\n(النظام: أرسل العميل صورة/لقطة شاشة لا يمكنك رؤيتها. اطلب وصفًا نصيًا أو صعّد للدعم.)"
+            "\n\n(النظام: أرسل العميل صورة/لقطة شاشة. اطلب منه يوضح إيش يشوف: هل خط menasim "
+            "مفعّل؟ تجوال البيانات؟ ICCID ظاهر؟ لا تعرض قائمة مشاكل — ساعده على اللي في الصورة.)"
             if language == "ar"
-            else "\n\n(System: the customer sent an image/screenshot you cannot see. Ask them to "
-            "describe it in text, or escalate to a human.)"
+            else "\n\n(System: the customer sent a screenshot/image. Ask what they see in it: "
+            "Is the menasim line ON? Data Roaming? ICCID visible? Do not list problem menus — "
+            "help with what the screenshot likely shows: line off, roaming off, or eSIM not installed.)"
         )
         user_text = f"{user_content}{note}"
     messages.append({"role": "user", "content": user_text})

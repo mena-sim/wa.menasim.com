@@ -4,6 +4,7 @@ import json
 from typing import Any, Callable
 
 from app.agent.tools import (
+    check_esim_usage,
     escalate,
     esim_status,
     kb_search,
@@ -39,7 +40,15 @@ def _log_skill_call(ctx: ToolContext, name: str, args: dict[str, Any], result: d
             pass
 
 # Ordered so schemas are stable for the model.
-_MODULES = [kb_search, order_lookup, esim_status, resend_qr, escalate, refund_ticket]
+_MODULES = [
+    kb_search,
+    order_lookup,
+    check_esim_usage,
+    esim_status,
+    resend_qr,
+    escalate,
+    refund_ticket,
+]
 
 TOOL_SCHEMAS: list[dict[str, Any]] = [m.SCHEMA for m in _MODULES]
 

@@ -34,28 +34,35 @@ Implemented in `app/agent/tools/` (one file per skill), dispatched by
 - **output**: `{ found: bool, orders: [{ id, number, status, total, currency, items, ... }] }`
 - **guardrail**: Read-only. Loose lookup (no identity gate yet) — do not read out full PII unprompted.
 
-## 3. esim_status
+## 3. check_esim_usage
+
+- **description**: Check remaining data, total package, expiry, and status for a menasim eSIM by ICCID (menasim.com usage page).
+- **input**: `iccid: string` (required)
+- **output**: `{ found, iccid, status, remaining, total, expired_at, is_unlimited, ... }`
+- **guardrail**: Read-only. Requires verified identity (`order_lookup` first). Never invent usage numbers.
+
+## 4. esim_status
 
 - **description**: Check whether a customer's eSIM is activated/pending/failed (provider adapter or WooCommerce meta).
 - **input**: `iccid: string` OR `order_ref: string` OR `order_number` / `email`
 - **output**: `{ found: bool, status, iccid, ... }`
 - **guardrail**: Read-only. No side effects.
 
-## 4. resend_qr
+## 5. resend_qr
 
 - **description**: Regenerate and send the eSIM activation QR (as an image) + activation code.
 - **input**: `iccid` / `order_ref` (+ `provider`) OR `order_number` / `email`
 - **output**: `{ sent: bool, iccid, qr_image_url, activation_code }`
 - **guardrail**: **Max 3 resends per conversation per 24h.** The 4th attempt does not resend — it auto-escalates to a human (counted from the `skill_calls` log).
 
-## 5. refund_ticket
+## 6. refund_ticket
 
 - **description**: Log a refund/cancellation request for the billing team. The agent CANNOT issue a refund itself.
 - **input**: `reason: string` (required), optional `order_number`, `contact`, `amount: number` (USD)
 - **output**: `{ logged: bool, ticket_id, escalated: bool }`
 - **guardrail**: **Hard cap — if `amount >= 50` (USD) the request is force-escalated to a human** (never presented as agent-resolvable). Under 50 it is still only a ticket, never an automatic refund. Always sets `needs_human` and notifies the team.
 
-## 6. escalate
+## 7. escalate
 
 - **description**: Hand the conversation to a human agent and pause AI replies.
 - **input**: `reason: string` (required), optional `summary`, `contact`

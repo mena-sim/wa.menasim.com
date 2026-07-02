@@ -118,7 +118,31 @@ class WooCommerceClient:
         iccid = self._meta_value(meta, self.iccid_keys) or self._auto_iccid(meta)
         qr = self._meta_value(meta, self.qr_keys) or self._auto_qr(meta)
         status = self._meta_value(meta, self.status_keys) or self._auto_status(meta)
-        return {"iccid": iccid, "qr": qr, "status": status}
+        order_lpa = self._meta_value(meta, ["order_lpa", "lpa", "activation_code"])
+        apple_install = self._meta_value(
+            meta,
+            [
+                "direct_apple_installation_url",
+                "apple_installation_url",
+                "ios_install_url",
+            ],
+        )
+        android_install = self._meta_value(
+            meta,
+            [
+                "direct_android_installation_url",
+                "android_installation_url",
+                "android_install_url",
+            ],
+        )
+        return {
+            "iccid": iccid,
+            "qr": qr,
+            "status": status,
+            "order_lpa": order_lpa,
+            "direct_apple_installation_url": apple_install,
+            "direct_android_installation_url": android_install,
+        }
 
     def _auto_qr(self, meta: list[dict[str, Any]]) -> str | None:
         pairs = [
