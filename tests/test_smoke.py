@@ -746,6 +746,72 @@ def test_support_contact_escalates_and_replies(db, monkeypatch):
     assert ticket.contact == "+447954823445"
 
 
+def test_parse_inbound_text_field_as_json_dict():
+    from app.services.channels.whatsapp_telnyx_channel import parse_inbound
+
+    body = {
+        "data": {
+            "event_type": "message.received",
+            "payload": {
+                "id": "text-json-dict",
+                "from": "+447954823445",
+                "text": {"type": "text", "text": {"body": "send email"}},
+            },
+        }
+    }
+    inbound = parse_inbound(body)
+    assert inbound is not None
+    assert inbound.text == "send email"
+    assert inbound.is_audio is False
+
+
+def test_parse_inbound_text_field_body_only_dict():
+    from app.services.channels.whatsapp_telnyx_channel import parse_inbound
+
+    body = {
+        "data": {
+            "event_type": "message.received",
+            "payload": {
+                "id": "text-body-dict",
+                "from": "+447954823445",
+                "text": {"body": "can you send email to support to contact me"},
+            },
+        }
+    }
+    inbound = parse_inbound(body)
+    assert inbound is not None
+    assert inbound.text == "can you send email to support to contact me"
+
+
+def test_wants_support_contact_arabic_send_email():
+    from app.agent.engine import wants_support_contact
+
+    assert wants_support_contact("ابعت ايميل للسبورت يخكو معي") is True
+
+
+def test_support_contact_arabic_escalates(db, monkeypatch):
+    from app.agent import engine
+    from app.models.ticket import Ticket
+    from sqlalchemy import select
+
+    monkeypatch.setattr(
+        "app.agent.tools.escalate.send_escalation_email",
+        lambda *_a, **_k: (True, "sent"),
+    )
+
+    result = engine.handle_message(
+        db,
+        channel="whatsapp",
+        sender_id="+447700900011",
+        text="ابعت ايميل للسبورت يخكو معي",
+    )
+    assert result.escalated is True
+    ticket = db.execute(
+        select(Ticket).where(Ticket.conversation_id == result.conversation_id)
+    ).scalar_one()
+    assert ticket.contact == "+447700900011"
+
+
 def test_empty_text_reply_not_voice_specific(db):
     from app.agent import engine
     from app.models.message import Message

@@ -77,17 +77,40 @@ def wants_support_contact(text: str) -> bool:
         "support team",
         "ارسل ايميل",
         "أرسل ايميل",
+        "ارسل إيميل",
+        "أرسل إيميل",
+        "ابعت ايميل",
+        "ابعت إيميل",
+        "ابعت ايميل",
+        "ابعث ايميل",
         "ارسل بريد",
         "أرسل بريد",
+        "ايميل للسبورت",
+        "إيميل للسبورت",
+        "ايميل للدعم",
+        "إيميل للدعم",
         "تواصل معي",
         "اتصل بي",
         "اتصلوا",
+        "يكونوا معي",
+        "يككو معي",
+        "يخكو معي",
         "موظف",
         "دعم فني",
         "الدعم",
         "بشري",
     )
-    return any(n in t for n in needles)
+    if any(n in t for n in needles):
+        return True
+    if ("ايميل" in t or "إيميل" in t or "email" in t) and (
+        "سبورت" in t or "support" in t or "دعم" in t
+    ):
+        return True
+    if ("ابعت" in t or "ابعث" in t or "ارسل" in t or "أرسل" in t) and (
+        "ايميل" in t or "إيميل" in t or "email" in t or "بريد" in t
+    ):
+        return True
+    return False
 
 
 def customer_stated_need(text: str) -> bool:

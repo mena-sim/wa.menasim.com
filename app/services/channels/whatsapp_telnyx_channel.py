@@ -49,6 +49,85 @@ _BODY_TRUNC_RE = re.compile(
 )
 
 
+def _text_from_message_obj(obj: dict[str, Any]) -> str:
+    """Extract user-visible text from a Meta/Telnyx WhatsApp message object."""
+    if not obj:
+        return ""
+    if isinstance(obj.get("text"), dict):
+        body = str(obj["text"].get("body") or "").strip()
+        if body:
+            return body
+    if isinstance(obj.get("text"), str):
+        t = obj["text"].strip()
+        if t and not t.startswith("{"):
+            return t
+    body = str(obj.get("body") or "").strip()
+    if body and not body.startswith("{"):
+        return body
+    return ""
+
+
+def _text_from_any_value(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, dict):
+        return _text_from_message_obj(value)
+    if isinstance(value, str):
+        s = value.strip()
+        if not s:
+            return ""
+        if s.startswith("{"):
+            parsed = _parse_maybe_dict(s)
+            if parsed:
+                body = _text_from_message_obj(parsed)
+                if body:
+                    return body
+            body = _extract_text_body_from_blob(s)
+            if body:
+                return body
+            return ""
+        return s
+    return ""
+
+
+def _deep_find_text_body(obj: Any, depth: int = 0) -> str:
+    """Walk the webhook payload when text is not in the obvious fields."""
+    if depth > 10:
+        return ""
+    if isinstance(obj, dict):
+        if not any(isinstance(obj.get(k), dict) for k in _MEDIA_KEYS):
+            body = _text_from_message_obj(obj)
+            if body:
+                return body
+        for key, value in obj.items():
+            if key in _MEDIA_KEYS:
+                continue
+            found = _deep_find_text_body(value, depth + 1)
+            if found:
+                return found
+    elif isinstance(obj, list):
+        for item in obj:
+            found = _deep_find_text_body(item, depth + 1)
+            if found:
+                return found
+    elif isinstance(obj, str) and obj.strip().startswith("{"):
+        parsed = _parse_maybe_dict(obj)
+        if parsed:
+            return _deep_find_text_body(parsed, depth + 1)
+    return ""
+
+
+def _serialize_raw_text(raw_text: Any) -> str:
+    if raw_text is None:
+        return ""
+    if isinstance(raw_text, dict):
+        try:
+            return json.dumps(raw_text, ensure_ascii=False)[:4000]
+        except (TypeError, ValueError):
+            return str(raw_text)[:4000]
+    return str(raw_text)[:4000]
+
+
 def _phone_from_field(value: Any) -> str:
     """Telnyx SMS webhooks use {\"phone_number\": \"+1...\"}; WhatsApp may use a plain string."""
     if isinstance(value, str):
@@ -141,7 +220,9 @@ def repair_inbound(inbound: InboundMessage) -> InboundMessage:
     if not raw:
         return inbound
     if not (inbound.text or "").strip():
-        body = _extract_text_body_from_blob(raw)
+        body = _text_from_any_value(raw)
+        if not body:
+            body = _extract_text_body_from_blob(raw)
         if body:
             inbound.text = body
     if not inbound.media_url and _raw_text_looks_like_audio(raw):
@@ -229,7 +310,11 @@ def payload_debug_summary(payload: dict[str, Any]) -> dict[str, Any]:
 def _looks_like_whatsapp_message(obj: dict[str, Any]) -> bool:
     if str(obj.get("type") or "") in {"text", "audio", "image", "video", "document", "sticker"}:
         return True
-    return any(isinstance(obj.get(key), dict) for key in _MEDIA_KEYS) or isinstance(obj.get("text"), dict)
+    if isinstance(obj.get("body"), str) and obj.get("body", "").strip():
+        return True
+    return any(isinstance(obj.get(key), dict) for key in _MEDIA_KEYS) or isinstance(
+        obj.get("text"), (dict, str)
+    )
 
 
 def _resolve_whatsapp_message(payload: dict[str, Any]) -> dict[str, Any]:
@@ -246,6 +331,9 @@ def _resolve_whatsapp_message(payload: dict[str, Any]) -> dict[str, Any]:
     parsed_text = _parse_maybe_dict(payload.get("text"))
     if parsed_text and _looks_like_whatsapp_message(parsed_text):
         return parsed_text
+    text_val = payload.get("text")
+    if isinstance(text_val, dict) and _looks_like_whatsapp_message(text_val):
+        return text_val
     return {}
 
 
@@ -271,23 +359,16 @@ def _infer_wm_type(wm: dict[str, Any]) -> str:
 
 def _extract_text(payload: dict[str, Any], wm: dict[str, Any]) -> str:
     if wm:
-        if _infer_wm_type(wm) == "text" and isinstance(wm.get("text"), dict):
-            return str(wm["text"].get("body") or "").strip()
-        if isinstance(wm.get("text"), dict):
-            return str(wm["text"].get("body") or "").strip()
-        if isinstance(wm.get("text"), str):
-            return wm["text"].strip()
-
-    text = payload.get("text") or payload.get("body") or ""
-    if isinstance(text, str) and text.strip().startswith("{"):
-        body = _extract_text_body_from_blob(text)
+        body = _text_from_message_obj(wm)
         if body:
             return body
-        # Never pass Telnyx/Meta dict blobs through as chat text.
-        return ""
-    if isinstance(text, str):
-        return str(text).strip()
-    return ""
+
+    for key in ("text", "body", "content"):
+        body = _text_from_any_value(payload.get(key))
+        if body:
+            return body
+
+    return _deep_find_text_body(payload)
 
 
 def _extract_media_from_wm(
@@ -398,20 +479,34 @@ def parse_inbound(body: dict[str, Any]) -> InboundMessage | None:
 
     parse_notes: list[str] = []
     raw_text = payload.get("text")
+    if not text and raw_text is not None:
+        body_from_raw = _text_from_any_value(raw_text)
+        if body_from_raw:
+            text = body_from_raw
+            parse_notes.append("text_from_raw")
+
     if not text and isinstance(raw_text, str) and raw_text.strip().startswith("{"):
         body_from_blob = _extract_text_body_from_blob(raw_text)
         if body_from_blob:
             text = body_from_blob
             parse_notes.append("text_from_blob")
 
-    if not media_url and isinstance(raw_text, str) and raw_text.strip().startswith("{"):
-        blob_url, blob_ct, blob_fn, blob_type = _extract_from_text_blob(raw_text)
-        if blob_url:
-            media_url = blob_url
-            content_type = blob_ct or content_type
-            filename = blob_fn or filename
-            wm_type = blob_type or wm_type
-            parse_notes.append("media_from_text_blob")
+    if not text:
+        deep_body = _deep_find_text_body(payload)
+        if deep_body:
+            text = deep_body
+            parse_notes.append("text_from_payload_scan")
+
+    if not media_url and raw_text is not None:
+        raw_for_blob = _serialize_raw_text(raw_text)
+        if raw_for_blob.strip().startswith("{"):
+            blob_url, blob_ct, blob_fn, blob_type = _extract_from_text_blob(raw_for_blob)
+            if blob_url:
+                media_url = blob_url
+                content_type = blob_ct or content_type
+                filename = blob_fn or filename
+                wm_type = blob_type or wm_type
+                parse_notes.append("media_from_text_blob")
 
     if not media_url:
         picked = _pick_media_candidate(_find_media_in_obj(payload))
@@ -436,14 +531,13 @@ def parse_inbound(body: dict[str, Any]) -> InboundMessage | None:
 
     parse_debug = payload_debug_summary(payload)
     if raw_text is not None:
-        parse_debug["raw_text"] = str(raw_text)[:4000]
+        parse_debug["raw_text"] = _serialize_raw_text(raw_text)
     if parse_notes:
         parse_debug["parse_notes"] = parse_notes
     if (
         not media_url
-        and isinstance(raw_text, str)
-        and raw_text.strip().startswith("{")
-        and re.search(r"""['"]audio['"]\s*:""", raw_text)
+        and raw_text is not None
+        and _raw_text_looks_like_audio(_serialize_raw_text(raw_text))
     ):
         parse_debug["parse_error"] = "audio_dict_in_text_but_no_url_extracted"
 
