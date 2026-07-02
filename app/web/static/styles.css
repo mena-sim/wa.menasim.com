@@ -33,8 +33,8 @@ body {
   border-radius: 0;
   overflow: hidden;
 }
-/* Page itself never scrolls; only the message list does. */
-body:has(.chat-wrap) { overflow: hidden; }
+/* Page itself never scrolls; only the message list does. Beige backdrop (no blue). */
+body:has(.chat-wrap) { overflow: hidden; background: #d8d2c7; }
 
 @media (min-width: 760px) {
   .chat-wrap {

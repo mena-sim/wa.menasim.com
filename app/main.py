@@ -56,6 +56,23 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title=get_settings().app_name, lifespan=lifespan)
 
+
+@app.middleware("http")
+async def _revalidate_web_assets(request, call_next):
+    """Force browsers/proxies to revalidate the chat UI + its (non-hashed) static
+    assets so a deploy is picked up immediately instead of serving a stale cache.
+    ETag/Last-Modified still allow efficient 304s when nothing changed."""
+    response = await call_next(request)
+    path = request.url.path
+    if (
+        path in ("/", "/inbox", "/admin")
+        or path.startswith("/static")
+        or (path.startswith("/admin") and not path.startswith("/admin/assets"))
+    ):
+        response.headers["Cache-Control"] = "no-cache, must-revalidate"
+    return response
+
+
 app.include_router(health.router)
 app.include_router(chat.router)
 app.include_router(kb.router)
