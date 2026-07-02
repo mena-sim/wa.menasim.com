@@ -31,6 +31,28 @@ def _fernet() -> Fernet:
     return Fernet(key.encode("utf-8"))
 
 
+@lru_cache
+def signing_secret() -> bytes:
+    """Stable secret for signing admin session tokens (survives restarts).
+
+    Derived from the same persisted encryption key material, so tokens stay valid
+    across deploys/restarts but rotate if the key is regenerated.
+    """
+    settings = get_settings()
+    key = (settings.encryption_key or "").strip()
+    if not key:
+        os.makedirs("data", exist_ok=True)
+        if os.path.exists(_KEY_FILE):
+            with open(_KEY_FILE, "rb") as f:
+                key = f.read().decode("utf-8").strip()
+        else:
+            # Touch the Fernet key so both share the same persisted material.
+            _fernet()
+            with open(_KEY_FILE, "rb") as f:
+                key = f.read().decode("utf-8").strip()
+    return key.encode("utf-8")
+
+
 def encrypt(value: str) -> str:
     if value is None:
         value = ""

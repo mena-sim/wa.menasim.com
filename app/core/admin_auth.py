@@ -1,17 +1,19 @@
 from __future__ import annotations
 
+import base64
+import hashlib
 import hmac
-import secrets
 import time
 
 from fastapi import Header, HTTPException, status
 
 from app.core.config import get_settings
+from app.core.security import signing_secret
 
-# In-memory bearer tokens: token -> expiry epoch. Fine for a single-node prototype;
-# tokens are lost on restart (admin simply logs in again).
-_TOKENS: dict[str, float] = {}
-_TOKEN_TTL = 60 * 60 * 12  # 12 hours
+# Stateless, signed bearer tokens. They survive app restarts/deploys (unlike the
+# old in-memory scheme) and stay valid for a long time so the admin stays logged
+# in. A token is invalidated automatically if the admin password changes.
+_TOKEN_TTL = 60 * 60 * 24 * 365  # 1 year
 
 
 def verify_password(password: str) -> bool:
@@ -19,24 +21,41 @@ def verify_password(password: str) -> bool:
     return hmac.compare_digest(str(password or ""), str(expected))
 
 
+def _key() -> bytes:
+    # Bind tokens to the admin password so changing it logs everyone out.
+    pw = (get_settings().admin_password or "").encode("utf-8")
+    return hashlib.sha256(signing_secret() + b"|admin|" + pw).digest()
+
+
+def _sign(msg: bytes) -> str:
+    return base64.urlsafe_b64encode(hmac.new(_key(), msg, hashlib.sha256).digest()).decode().rstrip("=")
+
+
 def issue_token() -> str:
-    token = secrets.token_urlsafe(32)
-    _TOKENS[token] = time.time() + _TOKEN_TTL
-    return token
+    issued = str(int(time.time()))
+    payload = base64.urlsafe_b64encode(issued.encode()).decode().rstrip("=")
+    return f"{payload}.{_sign(payload.encode())}"
 
 
 def _valid(token: str) -> bool:
-    exp = _TOKENS.get(token)
-    if not exp:
+    try:
+        payload, sig = token.split(".", 1)
+    except ValueError:
         return False
-    if time.time() > exp:
-        _TOKENS.pop(token, None)
+    if not hmac.compare_digest(sig, _sign(payload.encode())):
         return False
-    return True
+    try:
+        pad = "=" * (-len(payload) % 4)
+        issued = int(base64.urlsafe_b64decode(payload + pad).decode())
+    except (ValueError, TypeError):
+        return False
+    return (time.time() - issued) <= _TOKEN_TTL
 
 
 def revoke(token: str) -> None:
-    _TOKENS.pop(token, None)
+    # Stateless tokens can't be individually revoked; logout is handled client-side.
+    # (Changing ADMIN_PASSWORD invalidates all existing tokens.)
+    return None
 
 
 def require_admin(authorization: str = Header(default="")) -> str:
