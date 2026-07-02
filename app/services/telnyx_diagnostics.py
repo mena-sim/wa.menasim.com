@@ -14,9 +14,11 @@ from app.models.processed_event import ProcessedEvent
 from app.services import runtime_config, webhook_log
 from app.services.telnyx_resolve import (
     effective_profile_id,
+    find_menasim_profile,
     is_uuid,
     lookup_messaging_profile_for_number,
     looks_like_waba_id,
+    MENASIM_MESSAGING_PROFILE_NAME,
     pick_app_messaging_profile,
 )
 from app.services.channels.whatsapp_telnyx_channel import WHATSAPP_CHANNEL, parse_inbound
@@ -113,13 +115,14 @@ def discover(db: Session) -> dict[str, Any]:
                 )
 
             profiles = _list_messaging_profiles(client, api_key)
+            menasim_profile = find_menasim_profile(profiles)
             profile_rows = []
-            for p in profiles:
+            if menasim_profile:
                 profile_rows.append(
                     {
-                        "id": str(p.get("id") or ""),
-                        "name": str(p.get("name") or ""),
-                        "webhook_url": str(p.get("webhook_url") or ""),
+                        "id": str(menasim_profile.get("id") or ""),
+                        "name": str(menasim_profile.get("name") or ""),
+                        "webhook_url": str(menasim_profile.get("webhook_url") or ""),
                     }
                 )
             out["messaging_profiles"] = profile_rows
@@ -173,15 +176,14 @@ def discover(db: Session) -> dict[str, Any]:
                     f"'{configured_profile}' is your WABA ID (Meta). Put that in WhatsApp → Business account ID, "
                     "not Telnyx → Messaging profile ID."
                 )
-            elif configured_profile and is_uuid(configured_profile):
-                if not any(p["id"] == configured_profile for p in out["messaging_profiles"]):
-                    out["warnings"].append(
-                        f"Messaging profile '{configured_profile}' was not found in your Telnyx account. "
-                        "Pick the correct profile from the list below (e.g. WA 2-99)."
-                    )
+            elif not menasim_profile:
+                out["warnings"].append(
+                    f"Telnyx profile '{MENASIM_MESSAGING_PROFILE_NAME}' was not found. "
+                    "SMS/voxbulk/ai-assistant profiles are ignored by this app."
+                )
             elif not configured_profile and out["suggested_profile_id"]:
                 out["warnings"].append(
-                    f"Select messaging profile '{out.get('app_profile_name')}' and save, then run Auto-detect."
+                    f"Run Auto-detect to wire {from_number} to '{MENASIM_MESSAGING_PROFILE_NAME}'."
                 )
 
             if configured_waba and out["suggested_waba_id"] and configured_waba != out["suggested_waba_id"]:
@@ -204,11 +206,7 @@ def auto_configure(db: Session) -> dict[str, Any]:
     from_number = normalize_e164(runtime_config.get(db, "telnyx_whatsapp_from"))
     target_webhook = webhook_url()
 
-    profile_id = (
-        info.get("app_profile_id")
-        or info.get("suggested_profile_id")
-        or (runtime_config.get(db, "telnyx_messaging_profile_id") or "").strip()
-    )
+    profile_id = info.get("app_profile_id") or info.get("suggested_profile_id")
 
     if info.get("suggested_waba_id"):
         runtime_config.set_value(db, "whatsapp_business_id", str(info["suggested_waba_id"]))
@@ -249,7 +247,7 @@ def auto_configure(db: Session) -> dict[str, Any]:
             else (
                 "Telnyx WhatsApp profile configured."
                 if ok
-                else "Pick the menasim messaging profile (e.g. WA 2-99) in Settings → Telnyx, save, then retry."
+                else f"Profile '{MENASIM_MESSAGING_PROFILE_NAME}' not found in Telnyx — create it, then retry Auto-detect."
             )
         ),
         "changed": changed,
@@ -287,6 +285,12 @@ def status(db: Session) -> dict[str, Any]:
         ),
         "suggested_profile_id": discovered.get("suggested_profile_id"),
         "suggested_waba_id": discovered.get("suggested_waba_id"),
+        "app_profile_id": discovered.get("app_profile_id"),
+        "app_profile_name": discovered.get("app_profile_name"),
+        "number_profile_id": discovered.get("number_profile_id"),
+        "number_profile_name": discovered.get("number_profile_name"),
+        "number_profile_webhook": discovered.get("number_profile_webhook"),
+        "profile_mismatch": discovered.get("profile_mismatch"),
         "warnings": discovered.get("warnings") or [],
         "whatsapp_numbers": discovered.get("whatsapp_numbers") or [],
         "messaging_profiles": discovered.get("messaging_profiles") or [],
@@ -396,7 +400,7 @@ def test_connection(db: Session) -> dict[str, Any]:
                     )
             else:
                 warnings.append(
-                    "No menasim messaging profile selected. Pick 'WA 2-99' in Settings → Telnyx."
+                    "No WA 2-99 profile found — run Auto-detect after the profile exists in Telnyx."
                 )
 
             if discovered.get("number_profile_name"):

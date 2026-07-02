@@ -153,11 +153,15 @@ def test_parse_inbound_normalizes_whatsapp_prefix():
 
 
 def test_pick_app_messaging_profile():
-    from app.services.telnyx_resolve import pick_app_messaging_profile
+    from app.services.telnyx_resolve import (
+        MENASIM_MESSAGING_PROFILE_NAME,
+        pick_app_messaging_profile,
+    )
 
     profiles = [
         {"id": "vox-id", "name": "Voxbulk", "webhook_url": "https://api.voxbulk.com/telnyx/webhooks/messages"},
-        {"id": "wa-id", "name": "WA 2-99", "webhook_url": "https://api.voxbulk.com/telnyx/webhooks/messages"},
+        {"id": "sms-id", "name": "SMS", "webhook_url": "https://api.voxbulk.com/telnyx/webhooks/messages"},
+        {"id": "wa-id", "name": "WA 2-99", "webhook_url": "https://wa.menasim.com/telnyx/webhooks/messages"},
         {"id": "other-id", "name": "Other", "webhook_url": "https://example.com/hook"},
     ]
     picked = pick_app_messaging_profile(
@@ -166,13 +170,34 @@ def test_pick_app_messaging_profile():
         app_webhook_url="https://wa.menasim.com/telnyx/webhooks/messages",
     )
     assert picked["id"] == "wa-id"
+    assert picked["name"] == MENASIM_MESSAGING_PROFILE_NAME
 
     picked2 = pick_app_messaging_profile(
         profiles,
         configured_profile_id="",
         app_webhook_url="https://wa.menasim.com/telnyx/webhooks/messages",
     )
-    assert picked2 is None or picked2["id"] != "vox-id"
+    assert picked2["id"] == "wa-id"
+
+    picked3 = pick_app_messaging_profile(
+        profiles,
+        configured_profile_id="vox-id",
+        app_webhook_url="https://wa.menasim.com/telnyx/webhooks/messages",
+    )
+    assert picked3["id"] == "wa-id"
+
+
+def test_find_menasim_profile_ignores_other_profiles():
+    from app.services.telnyx_resolve import find_menasim_profile
+
+    profiles = [
+        {"id": "ai-id", "name": "ai-assistant-c8d58ec9", "webhook_url": ""},
+        {"id": "wa-id", "name": "WA 2-99", "webhook_url": "https://wa.menasim.com/telnyx/webhooks/messages"},
+    ]
+    hit = find_menasim_profile(profiles)
+    assert hit is not None
+    assert hit["id"] == "wa-id"
+    assert find_menasim_profile([{"id": "x", "name": "SMS"}]) is None
 
 
 def test_whatsapp_inbound_agent_pipeline(db):

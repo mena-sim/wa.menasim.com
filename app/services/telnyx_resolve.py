@@ -11,6 +11,9 @@ _UUID_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I
 )
 
+# Only this Telnyx messaging profile is used for menasim WhatsApp (ignore SMS/voxbulk/ai-assistant).
+MENASIM_MESSAGING_PROFILE_NAME = "WA 2-99"
+
 
 def looks_like_waba_id(value: str) -> bool:
     v = (value or "").strip()
@@ -55,35 +58,38 @@ def _profile_by_id(profiles: list[dict], profile_id: str) -> dict | None:
     return None
 
 
+def _is_menasim_profile_name(name: str) -> bool:
+    return str(name or "").strip().casefold() == MENASIM_MESSAGING_PROFILE_NAME.casefold()
+
+
+def find_menasim_profile(profiles: list[dict]) -> dict | None:
+    """Return the WA 2-99 profile only — never SMS, voxbulk, or ai-assistant profiles."""
+    for p in profiles:
+        if _is_menasim_profile_name(str(p.get("name") or "")):
+            return p
+    return None
+
+
 def pick_app_messaging_profile(
     profiles: list[dict],
     *,
     configured_profile_id: str,
     app_webhook_url: str,
 ) -> dict | None:
-    """Choose the messaging profile that belongs to THIS app (not voxbulk etc.)."""
-    configured = (configured_profile_id or "").strip()
-    target = (app_webhook_url or "").rstrip("/")
+    """Choose the menasim WA 2-99 messaging profile (ignore all other Telnyx profiles)."""
+    menasim = find_menasim_profile(profiles)
+    if not menasim:
+        return None
 
+    configured = (configured_profile_id or "").strip()
     if configured and not looks_like_waba_id(configured):
         hit = _profile_by_id(profiles, configured)
-        if hit:
+        if hit and _is_menasim_profile_name(str(hit.get("name") or "")):
             return hit
+        if configured == str(menasim.get("id") or ""):
+            return menasim
 
-    for p in profiles:
-        wh = str(p.get("webhook_url") or "").rstrip("/")
-        if target and wh == target:
-            return p
-
-    for p in profiles:
-        name = str(p.get("name") or "").lower()
-        wh = str(p.get("webhook_url") or "").lower()
-        if "voxbulk" in wh:
-            continue
-        if any(h in name for h in ("wa", "menasim", "wamena")):
-            return p
-
-    return None
+    return menasim
 
 
 def effective_profile_id(
@@ -135,26 +141,17 @@ def effective_profile_id(
         return app_id, warnings
 
     if configured and is_uuid(configured):
-        try:
-            resp = client.get(
-                f"https://api.telnyx.com/v2/messaging_profiles/{configured}",
-                headers=_headers(api_key),
+        hit = _profile_by_id(profiles, configured)
+        if hit and not _is_menasim_profile_name(str(hit.get("name") or "")):
+            warnings.append(
+                f"Configured profile '{hit.get('name')}' is not '{MENASIM_MESSAGING_PROFILE_NAME}' — "
+                "this app only uses the WA 2-99 profile."
             )
-            if resp.status_code < 300:
-                return configured, warnings
-            if resp.status_code == 404:
-                warnings.append(
-                    f"Messaging profile '{configured}' not found — set the correct profile in Settings."
-                )
-        except httpx.HTTPError:
-            pass
 
-    if number_profile_id:
-        warnings.append(
-            "No menasim messaging profile configured — falling back to wherever the number is assigned now."
-        )
-        return number_profile_id, warnings
-
+    warnings.append(
+        f"Messaging profile '{MENASIM_MESSAGING_PROFILE_NAME}' was not found in your Telnyx account. "
+        "Create it in Telnyx or run Auto-detect after it exists."
+    )
     return None, warnings
 
 
