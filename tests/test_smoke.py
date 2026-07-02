@@ -477,15 +477,16 @@ def test_smtp_connection_test(db, monkeypatch):
     assert "smtp.example.com" in msg
 
 
-def test_smtp_send_test_email(db, monkeypatch):
+def test_smtp_send_unicode_subject_and_body(db, monkeypatch):
     from app.services import notify, runtime_config
 
     runtime_config.set_value(db, "smtp_host", "smtp.example.com")
     runtime_config.set_value(db, "smtp_port", "587")
-    runtime_config.set_value(db, "alert_email_to", "alerts@menasim.com")
+    runtime_config.set_value(db, "smtp_from", "Menasim £ Support <alerts@menasim.com>")
+    runtime_config.set_value(db, "alert_email_to", "team@menasim.com")
     db.commit()
 
-    sent = {}
+    sent: dict = {}
 
     class FakeSMTP:
         def __init__(self, host, port, timeout=20):
@@ -500,9 +501,53 @@ def test_smtp_send_test_email(db, monkeypatch):
         def login(self, user, password):
             return None
 
-        def send_message(self, msg):
-            sent["to"] = msg["To"]
-            sent["subject"] = msg["Subject"]
+        def sendmail(self, from_addr, to_addrs, message):
+            sent["from_addr"] = from_addr
+            sent["to_addrs"] = to_addrs
+            sent["message"] = message
+            assert isinstance(message, (bytes, bytearray))
+            message.decode("utf-8")
+
+        def quit(self):
+            return None
+
+    monkeypatch.setattr("app.services.notify.smtplib.SMTP", FakeSMTP)
+    ok, msg = notify.send_email(
+        db,
+        subject="[menasim support] Refund £50",
+        body="Customer asked about £50 UK eSIM.\nمرحبا",
+    )
+    assert ok is True
+    assert sent["to_addrs"] == ["team@menasim.com"]
+    assert b"\xc2\xa3" in sent["message"] or b"=C2=A3" in sent["message"]
+
+
+def test_smtp_send_test_email(db, monkeypatch):
+    from app.services import notify, runtime_config
+
+    runtime_config.set_value(db, "smtp_host", "smtp.example.com")
+    runtime_config.set_value(db, "smtp_port", "587")
+    runtime_config.set_value(db, "alert_email_to", "alerts@menasim.com")
+    db.commit()
+
+    sent: dict = {}
+
+    class FakeSMTP:
+        def __init__(self, host, port, timeout=20):
+            pass
+
+        def ehlo(self):
+            return None
+
+        def starttls(self):
+            return None
+
+        def login(self, user, password):
+            return None
+
+        def sendmail(self, from_addr, to_addrs, message):
+            sent["to"] = to_addrs[0]
+            sent["message"] = message
 
         def quit(self):
             return None
@@ -511,5 +556,5 @@ def test_smtp_send_test_email(db, monkeypatch):
     ok, msg = notify.send_test_email(db)
     assert ok is True
     assert sent["to"] == "alerts@menasim.com"
-    assert "SMTP test" in sent["subject"]
+    assert b"SMTP test" in sent["message"]
 

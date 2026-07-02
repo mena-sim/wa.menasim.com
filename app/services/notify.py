@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import smtplib
 from contextlib import contextmanager
+from email.header import Header
 from email.message import EmailMessage
+from email.policy import SMTP
+from email.utils import formataddr, parseaddr
 from typing import Any, Iterator
 
 from sqlalchemy.orm import Session
@@ -11,6 +14,42 @@ from app.core.logging import get_logger
 from app.services import runtime_config
 
 logger = get_logger(__name__)
+
+
+def _encode_header(value: str) -> str:
+    value = (value or "").strip()
+    if not value:
+        return ""
+    if value.isascii():
+        return value
+    return str(Header(value, "utf-8"))
+
+
+def _encode_address(value: str) -> str:
+    """Encode display names in From/To when they contain non-ASCII characters."""
+    value = (value or "").strip()
+    if not value:
+        return ""
+    if value.isascii():
+        return value
+    name, addr = parseaddr(value)
+    if name and not name.isascii():
+        return formataddr((str(Header(name, "utf-8")), addr))
+    return value
+
+
+def _address_only(value: str) -> str:
+    _, addr = parseaddr(value or "")
+    return addr or (value or "").strip()
+
+
+def _build_message(*, subject: str, body: str, sender: str, recipient: str) -> EmailMessage:
+    msg = EmailMessage(policy=SMTP)
+    msg["Subject"] = _encode_header(subject)
+    msg["From"] = _encode_address(sender)
+    msg["To"] = _encode_address(recipient)
+    msg.set_content(body or "", subtype="plain", charset="utf-8")
+    return msg
 
 
 def _smtp_settings(db: Session) -> dict[str, Any]:
@@ -86,15 +125,18 @@ def send_email(
     if not recipient:
         return False, "Alert recipient is not set."
 
-    msg = EmailMessage()
-    msg["Subject"] = subject
-    msg["From"] = settings["sender"]
-    msg["To"] = recipient
-    msg.set_content(body)
+    msg = _build_message(
+        subject=subject,
+        body=body,
+        sender=settings["sender"],
+        recipient=recipient,
+    )
 
     try:
         with smtp_connection(db) as server:
-            server.send_message(msg)
+            from_addr = _address_only(settings["sender"])
+            to_addr = _address_only(recipient)
+            server.sendmail(from_addr, [to_addr], msg.as_bytes())
         logger.info("[notify] email sent to %s subject=%s", recipient, subject)
         return True, f"Email sent to {recipient}."
     except Exception as exc:
