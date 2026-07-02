@@ -63,6 +63,27 @@ def _headers(api_key: str) -> dict[str, str]:
     }
 
 
+def normalize_e164(phone: str) -> str:
+    """Ensure a phone number is in E.164 (+countrycode...) format."""
+    p = (phone or "").strip().replace(" ", "")
+    if p and not p.startswith("+"):
+        p = f"+{p}"
+    return p
+
+
+def _whatsapp_payload(text: str, *, media_url: str | None = None) -> dict[str, Any]:
+    """Build the whatsapp_message body for Telnyx /v2/messages/whatsapp."""
+    if media_url:
+        media: dict[str, Any] = {"link": media_url}
+        if text:
+            media["caption"] = text
+        return {"type": "image", "image": media}
+    return {
+        "type": "text",
+        "text": {"body": text, "preview_url": False},
+    }
+
+
 def send_whatsapp(
     db: Session, to: str, text: str, *, media_url: str | None = None
 ) -> dict[str, Any]:
@@ -72,21 +93,17 @@ def send_whatsapp(
         return {"ok": False, "skipped": True, "reason": "telnyx_not_configured"}
 
     api_key = runtime_config.get(db, "telnyx_api_key")
-    wa_from = runtime_config.get(db, "telnyx_whatsapp_from")
+    wa_from = normalize_e164(runtime_config.get(db, "telnyx_whatsapp_from"))
+    to = normalize_e164(to)
     profile_id = runtime_config.get(db, "telnyx_messaging_profile_id")
 
     payload: dict[str, Any] = {
         "from": wa_from,
         "to": to,
-        "type": "text",
-        "text": text,
+        "whatsapp_message": _whatsapp_payload(text, media_url=media_url),
     }
     if profile_id:
         payload["messaging_profile_id"] = profile_id
-    if media_url:
-        payload["type"] = "media"
-        payload["media_urls"] = [media_url]
-        payload["text"] = text
 
     try:
         with httpx.Client(timeout=30.0) as client:

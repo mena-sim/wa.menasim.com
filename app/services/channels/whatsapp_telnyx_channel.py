@@ -16,6 +16,15 @@ logger = get_logger(__name__)
 WHATSAPP_CHANNEL = "whatsapp"
 
 
+def _phone_from_field(value: Any) -> str:
+    """Telnyx SMS webhooks use {\"phone_number\": \"+1...\"}; WhatsApp may use a plain string."""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, dict):
+        return str(value.get("phone_number") or "").strip()
+    return ""
+
+
 def parse_inbound(body: dict[str, Any]) -> InboundMessage | None:
     """Parse a Telnyx webhook body into a normalized inbound message.
 
@@ -27,8 +36,7 @@ def parse_inbound(body: dict[str, Any]) -> InboundMessage | None:
         return None
 
     payload = data.get("payload") or {}
-    frm = payload.get("from") or {}
-    sender = str(frm.get("phone_number") or "").strip()
+    sender = _phone_from_field(payload.get("from"))
     if not sender:
         return None
 

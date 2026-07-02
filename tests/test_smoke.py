@@ -85,3 +85,36 @@ def test_parse_inbound_extracts_whatsapp_text():
     assert inbound.sender_id == "+15550001111"
     assert inbound.text == "hi"
     assert inbound.event_id == "msg_1"
+
+
+def test_parse_inbound_accepts_whatsapp_string_from():
+    """Telnyx WhatsApp webhooks send `from` as a plain E.164 string."""
+    body = {
+        "data": {
+            "event_type": "message.received",
+            "payload": {
+                "id": "msg_wa_1",
+                "from": "+447822002099",
+                "text": "hello",
+            },
+        }
+    }
+    inbound = parse_inbound(body)
+    assert inbound is not None
+    assert inbound.sender_id == "+447822002099"
+    assert inbound.text == "hello"
+
+
+def test_whatsapp_payload_uses_telnyx_schema():
+    from app.services.telnyx_client import _whatsapp_payload, normalize_e164
+
+    assert normalize_e164("447822002099") == "+447822002099"
+    assert _whatsapp_payload("Hi there") == {
+        "type": "text",
+        "text": {"body": "Hi there", "preview_url": False},
+    }
+    media = _whatsapp_payload("caption", media_url="https://example.com/qr.png")
+    assert media == {
+        "type": "image",
+        "image": {"link": "https://example.com/qr.png", "caption": "caption"},
+    }
