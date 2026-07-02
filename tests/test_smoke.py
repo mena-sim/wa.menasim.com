@@ -490,6 +490,39 @@ def test_telnyx_resolve_id_formats():
     assert not looks_like_waba_id("4e3162a5-13f6-4d12-b246-81705767a0b3")
 
 
+def test_smtp_connection_port_465_ssl(db, monkeypatch):
+    from app.services import notify, runtime_config
+
+    runtime_config.set_value(db, "smtp_host", "mail.menasim.com")
+    runtime_config.set_value(db, "smtp_port", "465")
+    runtime_config.set_value(db, "smtp_user", "alerts@menasim.com")
+    db.commit()
+
+    class FakeSMTP_SSL:
+        def __init__(self, host, port, timeout=20, context=None):
+            assert host == "mail.menasim.com"
+            assert port == 465
+            assert context is not None
+
+        def ehlo(self):
+            return None
+
+        def login(self, user, password):
+            return None
+
+        def noop(self):
+            return (250, b"OK")
+
+        def quit(self):
+            return None
+
+    monkeypatch.setattr("app.services.notify.smtplib.SMTP_SSL", FakeSMTP_SSL)
+    ok, msg = notify.test_smtp_connection(db)
+    assert ok is True
+    assert "465" in msg
+    assert "SSL" in msg
+
+
 def test_smtp_connection_test(db, monkeypatch):
     from app.services import notify, runtime_config
 
@@ -506,7 +539,7 @@ def test_smtp_connection_test(db, monkeypatch):
         def ehlo(self):
             return None
 
-        def starttls(self):
+        def starttls(self, context=None):
             return None
 
         def login(self, user, password):
@@ -542,7 +575,7 @@ def test_smtp_send_unicode_subject_and_body(db, monkeypatch):
         def ehlo(self):
             return None
 
-        def starttls(self):
+        def starttls(self, context=None):
             return None
 
         def login(self, user, password):
@@ -586,7 +619,7 @@ def test_smtp_send_test_email(db, monkeypatch):
         def ehlo(self):
             return None
 
-        def starttls(self):
+        def starttls(self, context=None):
             return None
 
         def login(self, user, password):

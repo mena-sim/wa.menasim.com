@@ -500,19 +500,24 @@ export default function Settings({ toast }) {
           {tab === "smtp" && (
             <div className="card">
               <h3><Icon name="mail" /> Escalation email alerts</h3>
-              <div className="desc">SMTP details used to email your team when the agent escalates or logs a refund.</div>
+              <div className="desc">
+                SMTP for escalation/refund alerts. menasim mail server: <strong>mail.menasim.com</strong>, port{" "}
+                <strong>465</strong> (SSL).
+              </div>
               <div className="row2col">
-                <Field label="SMTP host">
-                  <input placeholder="smtp.gmail.com" value={g.smtp.smtp_host}
+                <Field label="SMTP host" hint="e.g. mail.menasim.com">
+                  <input placeholder="mail.menasim.com" value={g.smtp.smtp_host}
                     onChange={(e) => setField("smtp", "smtp_host", e.target.value)} />
                 </Field>
-                <Field label="SMTP port">
-                  <input value={g.smtp.smtp_port} onChange={(e) => setField("smtp", "smtp_port", e.target.value)} />
+                <Field label="SMTP port" hint="465 = SSL (outgoing). 587 = STARTTLS.">
+                  <input placeholder="465" value={g.smtp.smtp_port}
+                    onChange={(e) => setField("smtp", "smtp_port", e.target.value)} />
                 </Field>
               </div>
               <div className="row2col">
-                <Field label="SMTP user">
-                  <input value={g.smtp.smtp_user} onChange={(e) => setField("smtp", "smtp_user", e.target.value)} />
+                <Field label="SMTP user" hint="Usually your full email address">
+                  <input placeholder="alerts@menasim.com" value={g.smtp.smtp_user}
+                    onChange={(e) => setField("smtp", "smtp_user", e.target.value)} />
                 </Field>
                 <Field label="SMTP password">
                   <input type="password" value={g.smtp.smtp_pass}
@@ -520,8 +525,9 @@ export default function Settings({ toast }) {
                 </Field>
               </div>
               <div className="row2col">
-                <Field label="From address">
-                  <input value={g.smtp.smtp_from} onChange={(e) => setField("smtp", "smtp_from", e.target.value)} />
+                <Field label="From address" hint="Must be allowed on your mail server">
+                  <input placeholder="alerts@menasim.com" value={g.smtp.smtp_from}
+                    onChange={(e) => setField("smtp", "smtp_from", e.target.value)} />
                 </Field>
                 <Field label="Alert recipient(s)">
                   <input placeholder="support@menasim.com" value={g.smtp.alert_email_to}

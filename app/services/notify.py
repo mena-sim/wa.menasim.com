@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import smtplib
+import ssl
 from contextlib import contextmanager
 from email.header import Header
 from email.message import EmailMessage
@@ -67,6 +68,14 @@ def _smtp_settings(db: Session) -> dict[str, Any]:
     }
 
 
+def _smtp_mode(port: int) -> str:
+    if port == 465:
+        return "SSL"
+    if port == 25:
+        return "plain"
+    return "STARTTLS"
+
+
 @contextmanager
 def smtp_connection(db: Session) -> Iterator[smtplib.SMTP]:
     """Open an authenticated SMTP connection using saved settings."""
@@ -77,12 +86,14 @@ def smtp_connection(db: Session) -> Iterator[smtplib.SMTP]:
         raise ValueError("SMTP host is not set.")
 
     if port == 465:
-        server: smtplib.SMTP = smtplib.SMTP_SSL(host, port, timeout=20)
+        context = ssl.create_default_context()
+        server: smtplib.SMTP = smtplib.SMTP_SSL(host, port, timeout=20, context=context)
+        server.ehlo()
     else:
         server = smtplib.SMTP(host, port, timeout=20)
         server.ehlo()
         if port != 25:
-            server.starttls()
+            server.starttls(context=ssl.create_default_context())
             server.ehlo()
     try:
         if settings["user"]:
@@ -104,7 +115,8 @@ def test_smtp_connection(db: Session) -> tuple[bool, str]:
         with smtp_connection(db) as server:
             server.noop()
         user_part = f" as {settings['user']}" if settings["user"] else ""
-        return True, f"Connected to {settings['host']}:{settings['port']}{user_part}."
+        mode = _smtp_mode(settings["port"])
+        return True, f"Connected to {settings['host']}:{settings['port']} ({mode}){user_part}."
     except Exception as exc:
         logger.warning("[notify] SMTP connection test failed: %s", exc)
         return False, str(exc)
