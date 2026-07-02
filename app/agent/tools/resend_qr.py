@@ -123,13 +123,16 @@ def run(
             "number or email, or escalate to a human to resend it.",
         }
 
-    image_url = generate_qr_image(qr_payload)
+    # If the stored value is already a hosted QR image, send it directly; otherwise
+    # render the activation payload (e.g. "LPA:1$...") into a QR image.
+    is_image_url = qr_payload.lower().startswith("http")
+    image_url = qr_payload if is_image_url else generate_qr_image(qr_payload)
     ctx.media_url = image_url  # channel will attach/render this image
     return {
         "sent": True,
         "iccid": resolved_iccid,
         "qr_image_url": image_url,
-        "activation_code": qr_payload,
-        "message": "QR image generated and attached. Tell the customer to scan it via "
-        "Settings > Add eSIM, and share the activation code as a manual fallback.",
+        "activation_code": None if is_image_url else qr_payload,
+        "message": "QR image attached. Tell the customer to scan it via Settings > Add eSIM"
+        + ("." if is_image_url else ", and share the activation code as a manual fallback."),
     }

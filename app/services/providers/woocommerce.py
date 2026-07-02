@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import httpx
@@ -10,9 +11,29 @@ from app.services import runtime_config
 
 logger = get_logger(__name__)
 
+# Heuristics so we can find eSIM data even when the meta key names differ by plugin.
+_QR_KEY_HINTS = ("qr", "lpa", "activation", "redemption", "smdp_full", "esim_code")
+_QR_IMG_RE = re.compile(r"^https?://\S+\.(?:png|jpe?g|svg|gif|webp)(?:\?\S*)?$", re.I)
+_LPA_RE = re.compile(r"^(?:LPA:)?1\$[^$]+\$[^$]+", re.I)
+_SMDP_KEY_HINTS = ("smdp", "sm-dp", "sm_dp")
+_MATCHING_KEY_HINTS = ("matching", "matching_id", "activation_code", "confirmation_code")
+_STATUS_KEY_HINTS = ("status", "state")
+
 
 def _csv(value: str) -> list[str]:
     return [part.strip() for part in (value or "").split(",") if part.strip()]
+
+
+def _looks_like_qr(key: str, value: str) -> bool:
+    k = key.lower()
+    if any(h in k for h in _QR_KEY_HINTS):
+        return True
+    v = value.strip()
+    return bool(_LPA_RE.match(v) or v.lower().startswith("lpa:") or _QR_IMG_RE.match(v))
+
+
+def _digits(value: str) -> str:
+    return re.sub(r"\D", "", value or "")
 
 
 class WooCommerceClient:
@@ -93,15 +114,63 @@ class WooCommerceClient:
         return None
 
     def extract_esim(self, order: dict[str, Any]) -> dict[str, Any]:
-        """Pull eSIM fields from an order (top-level meta + line-item meta)."""
+        """Pull eSIM fields from an order (top-level meta + line-item meta).
+
+        Configured meta keys win; otherwise we auto-detect by key/value shape so
+        it works across eSIM plugins without manual configuration.
+        """
         meta: list[dict[str, Any]] = list(order.get("meta_data") or [])
         for item in order.get("line_items") or []:
             meta.extend(item.get("meta_data") or [])
-        return {
-            "iccid": self._meta_value(meta, self.iccid_keys),
-            "qr": self._meta_value(meta, self.qr_keys),
-            "status": self._meta_value(meta, self.status_keys),
-        }
+
+        iccid = self._meta_value(meta, self.iccid_keys) or self._auto_iccid(meta)
+        qr = self._meta_value(meta, self.qr_keys) or self._auto_qr(meta)
+        status = self._meta_value(meta, self.status_keys) or self._auto_status(meta)
+        return {"iccid": iccid, "qr": qr, "status": status}
+
+    def _auto_qr(self, meta: list[dict[str, Any]]) -> str | None:
+        pairs = [
+            (str(m.get("key", "")), str(m.get("value") or ""))
+            for m in meta
+            if isinstance(m, dict) and m.get("value")
+        ]
+        # 1) A meta key/value that clearly holds a QR / activation payload or image.
+        for key, val in pairs:
+            if _looks_like_qr(key, val):
+                return val.strip()
+        # 2) Assemble an LPA string from SM-DP+ address + matching/confirmation code.
+        smdp = next(
+            (v for k, v in pairs if any(h in k.lower() for h in _SMDP_KEY_HINTS)), None
+        )
+        matching = next(
+            (v for k, v in pairs if any(h in k.lower() for h in _MATCHING_KEY_HINTS)), None
+        )
+        if smdp and matching:
+            host = smdp.strip().replace("LPA:", "").lstrip("1$").split("$")[0]
+            return f"LPA:1${host}${matching.strip()}"
+        return None
+
+    def _auto_iccid(self, meta: list[dict[str, Any]]) -> str | None:
+        for m in meta:
+            if not isinstance(m, dict) or not m.get("value"):
+                continue
+            key = str(m.get("key", "")).lower()
+            val = str(m.get("value"))
+            if "iccid" in key:
+                return val.strip()
+            digits = _digits(val)
+            if len(digits) in (19, 20) and digits.startswith("89"):
+                return digits
+        return None
+
+    def _auto_status(self, meta: list[dict[str, Any]]) -> str | None:
+        for m in meta:
+            if not isinstance(m, dict) or not m.get("value"):
+                continue
+            key = str(m.get("key", "")).lower()
+            if "esim" in key and any(h in key for h in _STATUS_KEY_HINTS):
+                return str(m.get("value")).strip()
+        return None
 
     @staticmethod
     def summarize_order(order: dict[str, Any]) -> dict[str, Any]:
