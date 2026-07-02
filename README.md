@@ -30,6 +30,25 @@ Add WooCommerce keys to enable order lookups; add Telnyx keys later for WhatsApp
 
 First run downloads the local embedding model (`all-MiniLM-L6-v2`) and indexes `kb_docs/`.
 
+## Admin console (React + Vite)
+
+A password-protected admin at **`/admin`** to configure everything and handle live chats
+(Conversations + Settings tabs: DeepSeek, Telnyx, WhatsApp, WordPress, Agent & KB, Email).
+
+- Config is stored in the DB (secrets Fernet-encrypted) and **overrides `.env`**, so you can
+  change keys from the UI without editing files or restarting.
+- Sign in with `ADMIN_PASSWORD` (from `.env`, default `admin` — change it).
+
+```powershell
+# Dev (hot reload) — runs on http://127.0.0.1:5174/admin, proxies /api to :8080
+cd admin-web
+npm install
+npm run dev
+
+# Production build — FastAPI then serves it at http://127.0.0.1:8080/admin
+npm run build
+```
+
 ## Key endpoints
 
 | Path | Purpose |
@@ -40,6 +59,11 @@ First run downloads the local embedding model (`all-MiniLM-L6-v2`) and indexes `
 | `POST /telnyx/webhooks/messages` | WhatsApp inbound (Telnyx) |
 | `GET /api/kb/documents`, `POST /api/kb/reindex`, `GET /api/kb/search` | Knowledge base |
 | `GET/PUT /api/settings/providers` | Configure eSIM providers at runtime |
+| `GET /admin` | React admin console |
+| `POST /api/admin/login` | Admin login (password → bearer token) |
+| `GET/PUT /api/admin/config[/{group}]` | Read/save runtime config (encrypted secrets) |
+| `POST /api/admin/config/test/{group}` | Test DeepSeek / Telnyx / WordPress connection |
+| `GET /api/admin/conversations[/{id}]`, `.../handover`, `.../reply`, `.../close` | Live chat + human handover |
 | `GET /health`, `/health/db`, `/health/kb` | Health checks |
 
 ## Configuration (.env)
@@ -50,6 +74,11 @@ See `.env.example`. Highlights:
 - `WC_BASE_URL`, `WC_CONSUMER_KEY`, `WC_CONSUMER_SECRET`, and `WC_ESIM_*_META` (plugin-specific meta keys for ICCID/QR/status)
 - `TELNYX_API_KEY`, `TELNYX_WHATSAPP_FROM`, `TELNYX_MESSAGING_PROFILE_ID`, `TELNYX_WEBHOOK_PUBLIC_KEY`
 - `SMTP_*` + `ALERT_EMAIL_TO` for escalation email alerts
+- `ADMIN_PASSWORD` (admin console login) and `ENCRYPTION_KEY` (Fernet key for stored secrets;
+  auto-generated to `data/secret.key` if blank)
+
+> Anything set in the admin console is stored in the DB and takes precedence over these `.env`
+> values. `.env` acts as the initial default / fallback.
 
 ## eSIM providers
 

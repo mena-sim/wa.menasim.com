@@ -11,10 +11,10 @@ from sqlalchemy.orm import Session
 from app.agent import llm
 from app.agent.prompts import build_system_prompt
 from app.agent.tools import TOOL_SCHEMAS, ToolContext, execute_tool
-from app.core.config import get_settings
 from app.core.logging import get_logger
 from app.models.conversation import Conversation
 from app.models.message import Message
+from app.services import runtime_config
 
 logger = get_logger(__name__)
 
@@ -30,6 +30,7 @@ class AgentResult:
     media_url: str | None = None
     escalated: bool = False
     needs_human: bool = False
+    suppressed: bool = False  # True when AI stayed silent (human handover)
 
 
 def detect_language(text: str) -> str:
@@ -39,8 +40,8 @@ def detect_language(text: str) -> str:
     return "en"
 
 
-def _rate_limited(sender_id: str) -> bool:
-    limit = get_settings().rate_limit_per_minute
+def _rate_limited(db: Session, sender_id: str) -> bool:
+    limit = runtime_config.get_int(db, "rate_limit_per_minute", 20)
     if limit <= 0:
         return False
     now = time.time()
@@ -105,7 +106,6 @@ def handle_message(
     media_url: str | None = None,
     is_image: bool = False,
 ) -> AgentResult:
-    settings = get_settings()
     convo = get_or_create_conversation(db, channel, sender_id)
 
     language = detect_language(text) if text else convo.language or "en"
@@ -122,7 +122,18 @@ def handle_message(
     )
     db.commit()
 
-    if _rate_limited(sender_id):
+    # Human handover: agent stays silent so a human can reply from the console.
+    if convo.handed_over:
+        db.refresh(convo)
+        return AgentResult(
+            reply="",
+            conversation_id=convo.id,
+            language=language,
+            needs_human=convo.needs_human,
+            suppressed=True,
+        )
+
+    if _rate_limited(db, sender_id):
         msg = (
             "أنت ترسل رسائل بسرعة كبيرة. أمهلني لحظة من فضلك."
             if language == "ar"
@@ -132,7 +143,7 @@ def handle_message(
         db.commit()
         return AgentResult(reply=msg, conversation_id=convo.id, language=language)
 
-    if not settings.llm_enabled:
+    if not runtime_config.llm_enabled(db):
         msg = (
             "المساعد غير مُهيأ بعد (DEEPSEEK_API_KEY مفقود)."
             if language == "ar"
@@ -142,10 +153,17 @@ def handle_message(
         db.commit()
         return AgentResult(reply=msg, conversation_id=convo.id, language=language)
 
+    llm_cfg = runtime_config.llm_config(db)
+
     # Build the working message list.
-    messages: list[dict] = [
-        {"role": "system", "content": build_system_prompt(language, whatsapp=(channel == "whatsapp"))}
-    ]
+    system_prompt = build_system_prompt(
+        language,
+        whatsapp=(channel == "whatsapp"),
+        agent_name=runtime_config.get(db, "agent_name"),
+        tone=runtime_config.get(db, "agent_tone"),
+        extra_instructions=runtime_config.get(db, "agent_system_instructions"),
+    )
+    messages: list[dict] = [{"role": "system", "content": system_prompt}]
     messages.extend(_load_history(db, convo.id)[:-1] or [])  # history excluding the just-added msg
     user_text = user_content
     if is_image:
@@ -160,9 +178,10 @@ def handle_message(
 
     ctx = ToolContext(db=db, conversation=convo, language=language)
 
+    max_iters = max(1, runtime_config.get_int(db, "agent_max_tool_iters", 6))
     final_text = ""
-    for _ in range(max(1, settings.agent_max_tool_iters)):
-        message = llm.chat(messages, tools=TOOL_SCHEMAS)
+    for _ in range(max_iters):
+        message = llm.chat(messages, tools=TOOL_SCHEMAS, **llm_cfg)
         tool_calls = getattr(message, "tool_calls", None)
         if not tool_calls:
             final_text = (message.content or "").strip()
@@ -190,7 +209,7 @@ def handle_message(
             )
     else:
         # Ran out of iterations; ask the model for a final answer with no tools.
-        message = llm.chat(messages, tools=None)
+        message = llm.chat(messages, tools=None, **llm_cfg)
         final_text = (message.content or "").strip()
 
     if not final_text:

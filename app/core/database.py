@@ -41,3 +41,33 @@ def init_db() -> None:
     from app import models  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
+    _ensure_columns()
+
+
+# Columns added after the first release. SQLite create_all won't ALTER existing
+# tables, so add any missing columns idempotently (prototype-friendly; no Alembic).
+_EXTRA_COLUMNS: dict[str, dict[str, str]] = {
+    "conversations": {
+        "handed_over": "BOOLEAN DEFAULT 0",
+        "closed": "BOOLEAN DEFAULT 0",
+        "customer_name": "VARCHAR(128) DEFAULT ''",
+    },
+    "messages": {
+        "is_human": "BOOLEAN DEFAULT 0",
+    },
+}
+
+
+def _ensure_columns() -> None:
+    from sqlalchemy import inspect, text
+
+    inspector = inspect(engine)
+    existing_tables = set(inspector.get_table_names())
+    with engine.begin() as conn:
+        for table, columns in _EXTRA_COLUMNS.items():
+            if table not in existing_tables:
+                continue
+            present = {c["name"] for c in inspector.get_columns(table)}
+            for name, ddl in columns.items():
+                if name not in present:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))

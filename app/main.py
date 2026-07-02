@@ -1,5 +1,15 @@
 from __future__ import annotations
 
+# Trust the OS certificate store (fixes SSL "unable to get local issuer certificate"
+# behind corporate proxies / antivirus TLS interception). Must run before any HTTPS
+# connection is made (DeepSeek API, huggingface model download). Safe no-op if missing.
+try:
+    import truststore
+
+    truststore.inject_into_ssl()
+except Exception:  # pragma: no cover
+    pass
+
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -11,13 +21,23 @@ from fastapi.staticfiles import StaticFiles
 from app.core.config import get_settings
 from app.core.database import SessionLocal, init_db
 from app.core.logging import get_logger
-from app.routers import chat, health, inbox, kb, settings as settings_router, telnyx_webhook
+from app.routers import (
+    admin,
+    chat,
+    health,
+    inbox,
+    kb,
+    settings as settings_router,
+    telnyx_webhook,
+)
 from app.services.kb import ingest
 
 logger = get_logger(__name__)
 
 BASE_DIR = Path(__file__).resolve().parent
+REPO_ROOT = BASE_DIR.parent
 STATIC_DIR = BASE_DIR / "web" / "static"
+ADMIN_DIST = REPO_ROOT / "admin-web" / "dist"
 MEDIA_DIR = Path("data/media")
 
 
@@ -41,6 +61,7 @@ app.include_router(chat.router)
 app.include_router(kb.router)
 app.include_router(settings_router.router)
 app.include_router(inbox.router)
+app.include_router(admin.router)
 app.include_router(telnyx_webhook.router)
 
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
@@ -56,3 +77,21 @@ def chat_page() -> FileResponse:
 @app.get("/inbox", include_in_schema=False)
 def inbox_page() -> FileResponse:
     return FileResponse(str(STATIC_DIR / "inbox.html"))
+
+
+# Serve the built React admin console at /admin (after `npm run build` in admin-web/).
+if ADMIN_DIST.exists():
+    app.mount("/admin/assets", StaticFiles(directory=str(ADMIN_DIST / "assets")), name="admin-assets")
+
+    @app.get("/admin", include_in_schema=False)
+    @app.get("/admin/{full_path:path}", include_in_schema=False)
+    def admin_spa(full_path: str = "") -> FileResponse:
+        return FileResponse(str(ADMIN_DIST / "index.html"))
+else:
+
+    @app.get("/admin", include_in_schema=False)
+    def admin_not_built() -> dict:
+        return {
+            "message": "Admin console not built yet. In admin-web/ run: npm install && npm run build. "
+            "For development run the Vite dev server (npm run dev) on port 5174."
+        }

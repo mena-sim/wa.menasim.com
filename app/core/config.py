@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     public_base_url: str = "http://127.0.0.1:8080"
     log_level: str = "INFO"
 
+    # Admin console
+    admin_password: str = "admin"
+    encryption_key: str = ""  # Fernet key; auto-generated to data/secret.key if empty
+
     # LLM (DeepSeek)
     deepseek_api_key: str = ""
     deepseek_base_url: str = "https://api.deepseek.com"

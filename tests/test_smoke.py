@@ -26,12 +26,12 @@ def test_tool_schemas_exposed():
     } <= names
 
 
-def test_telnyx_webhook_skips_without_public_key():
-    assert verify_webhook(b"{}", signature_header=None, timestamp_header=None) is True
+def test_telnyx_webhook_skips_without_public_key(db):
+    assert verify_webhook(db, b"{}", signature_header=None, timestamp_header=None) is True
 
 
-def test_woocommerce_disabled_by_default():
-    assert WooCommerceClient().enabled is False
+def test_woocommerce_disabled_by_default(db):
+    assert WooCommerceClient(db).enabled is False
 
 
 def test_registry_no_providers(db):

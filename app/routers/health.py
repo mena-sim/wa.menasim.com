@@ -6,21 +6,21 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.core.database import get_db
+from app.services import runtime_config
 from app.services.kb import store
 
 router = APIRouter(tags=["health"])
 
 
 @router.get("/health")
-def health() -> dict:
-    s = get_settings()
+def health(db: Session = Depends(get_db)) -> dict:
     return {
         "status": "ok",
-        "app": s.app_name,
-        "llm_enabled": s.llm_enabled,
-        "woocommerce_enabled": s.woocommerce_enabled,
-        "whatsapp_enabled": s.whatsapp_enabled,
-        "smtp_enabled": s.smtp_enabled,
+        "app": get_settings().app_name,
+        "llm_enabled": runtime_config.llm_enabled(db),
+        "woocommerce_enabled": runtime_config.woocommerce_enabled(db),
+        "whatsapp_enabled": runtime_config.whatsapp_enabled(db),
+        "smtp_enabled": runtime_config.smtp_enabled(db),
     }
 
 

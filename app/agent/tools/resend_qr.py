@@ -1,11 +1,17 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from sqlalchemy import func, select
+
 from app.agent.tools.context import ToolContext
+from app.models.skill_call import SkillCall
 from app.services.providers import registry
 from app.services.providers.woocommerce import WooCommerceClient
 from app.services.qr import generate_qr_image
+
+_MAX_RESENDS_24H = 3
 
 SCHEMA = {
     "type": "function",
@@ -30,8 +36,8 @@ SCHEMA = {
 }
 
 
-def _qr_from_woocommerce(order_number: str | None, email: str | None) -> tuple[str | None, str | None]:
-    wc = WooCommerceClient()
+def _qr_from_woocommerce(ctx, order_number: str | None, email: str | None) -> tuple[str | None, str | None]:
+    wc = WooCommerceClient(ctx.db)
     if not wc.enabled or not (order_number or email):
         return None, None
     orders = wc.find_orders(email=email, order_number=order_number)
@@ -42,6 +48,23 @@ def _qr_from_woocommerce(order_number: str | None, email: str | None) -> tuple[s
     return None, None
 
 
+def _recent_resend_count(ctx: ToolContext) -> int:
+    """Successful resends for this conversation in the last 24h (from the skill-call log)."""
+    convo_id = getattr(ctx.conversation, "id", None)
+    if convo_id is None:
+        return 0
+    since = datetime.now(timezone.utc) - timedelta(hours=24)
+    count = ctx.db.execute(
+        select(func.count(SkillCall.id)).where(
+            SkillCall.conversation_id == convo_id,
+            SkillCall.skill_name == "resend_qr",
+            SkillCall.created_at >= since,
+            SkillCall.output_json.like('%"sent": true%'),
+        )
+    ).scalar_one_or_none()
+    return int(count or 0)
+
+
 def run(
     ctx: ToolContext,
     iccid: str | None = None,
@@ -50,6 +73,25 @@ def run(
     order_number: str | None = None,
     email: str | None = None,
 ) -> dict[str, Any]:
+    # Guardrail: cap resends per conversation per 24h; the 4th auto-escalates.
+    if _recent_resend_count(ctx) >= _MAX_RESENDS_24H:
+        from app.agent.tools import escalate as escalate_tool
+
+        result = escalate_tool.run(
+            ctx,
+            reason="QR resend limit reached (>3 in 24h)",
+            summary=(
+                "Customer requested another eSIM QR resend after 3+ resends in 24h. "
+                "Possible activation problem needing human help."
+            ),
+            contact=email,
+        )
+        result["message"] = (
+            "You have already resent the QR several times recently, so I've escalated this "
+            "to a human agent to look into the activation properly."
+        )
+        return result
+
     qr_payload: str | None = None
     resolved_iccid = iccid
 
@@ -62,7 +104,7 @@ def run(
                 resolved_iccid = info.iccid or iccid
 
     if not qr_payload:
-        qr_payload, wc_iccid = _qr_from_woocommerce(order_number, email)
+        qr_payload, wc_iccid = _qr_from_woocommerce(ctx, order_number, email)
         resolved_iccid = resolved_iccid or wc_iccid
 
     if not qr_payload:

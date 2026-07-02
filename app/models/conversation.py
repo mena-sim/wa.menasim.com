@@ -21,6 +21,9 @@ class Conversation(Base):
     sender_id: Mapped[str] = mapped_column(String(128), index=True)
     language: Mapped[str] = mapped_column(String(8), default="en")
     needs_human: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    handed_over: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    closed: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    customer_name: Mapped[str] = mapped_column(String(128), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow

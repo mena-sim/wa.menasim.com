@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -24,6 +24,8 @@ class Message(Base):
     content: Mapped[str] = mapped_column(Text, default="")
     # Optional image/media URL attached to the message (inbound screenshot or outbound QR)
     media_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # True when a human agent authored this (stored as an assistant turn for the model).
+    is_human: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
     conversation: Mapped["Conversation"] = relationship(

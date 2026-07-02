@@ -36,7 +36,7 @@ def run(
     if not any([email, order_number, phone]):
         return {"found": False, "message": "Provide an email, order number, or phone to search."}
 
-    wc = WooCommerceClient()
+    wc = WooCommerceClient(ctx.db)
     if not wc.enabled:
         return {
             "found": False,

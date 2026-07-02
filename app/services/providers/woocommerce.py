@@ -3,11 +3,16 @@ from __future__ import annotations
 from typing import Any
 
 import httpx
+from sqlalchemy.orm import Session
 
-from app.core.config import get_settings
 from app.core.logging import get_logger
+from app.services import runtime_config
 
 logger = get_logger(__name__)
+
+
+def _csv(value: str) -> list[str]:
+    return [part.strip() for part in (value or "").split(",") if part.strip()]
 
 
 class WooCommerceClient:
@@ -15,28 +20,44 @@ class WooCommerceClient:
 
     Uses HTTP Basic auth with consumer key/secret (recommended over HTTPS).
     eSIM meta keys are plugin-dependent, so the meta key names are configurable
-    via env (WC_ESIM_*_META).
+    at runtime (WC_ESIM_*_META).
     """
 
-    def __init__(self) -> None:
-        s = get_settings()
-        self.base_url = (s.wc_base_url or "").rstrip("/")
-        self.key = s.wc_consumer_key
-        self.secret = s.wc_consumer_secret
-        self.iccid_keys = s.csv(s.wc_esim_iccid_meta)
-        self.qr_keys = s.csv(s.wc_esim_qr_meta)
-        self.status_keys = s.csv(s.wc_esim_status_meta)
+    def __init__(self, db: Session) -> None:
+        self.base_url = (runtime_config.get(db, "wc_base_url") or "").rstrip("/")
+        self.key = runtime_config.get(db, "wc_consumer_key")
+        self.secret = runtime_config.get(db, "wc_consumer_secret")
+        self.iccid_keys = _csv(runtime_config.get(db, "wc_esim_iccid_meta"))
+        self.qr_keys = _csv(runtime_config.get(db, "wc_esim_qr_meta"))
+        self.status_keys = _csv(runtime_config.get(db, "wc_esim_status_meta"))
 
     @property
     def enabled(self) -> bool:
         return bool(self.base_url and self.key and self.secret)
 
+    def _api_root(self) -> str:
+        root = self.base_url
+        if root.endswith("/wp-json"):
+            root = root[: -len("/wp-json")]
+        return root
+
     def _get(self, path: str, params: dict[str, Any] | None = None) -> Any:
-        url = f"{self.base_url}/wp-json/wc/v3/{path.lstrip('/')}"
+        url = f"{self._api_root()}/wp-json/wc/v3/{path.lstrip('/')}"
         with httpx.Client(timeout=20.0) as client:
             resp = client.get(url, params=params or {}, auth=(self.key, self.secret))
             resp.raise_for_status()
             return resp.json()
+
+    def test_connection(self) -> tuple[bool, str]:
+        if not self.enabled:
+            return False, "Missing base URL, consumer key or secret."
+        try:
+            self._get("orders", {"per_page": 1})
+            return True, "Connected to WooCommerce."
+        except httpx.HTTPStatusError as exc:
+            return False, f"HTTP {exc.response.status_code}: check keys/permissions."
+        except httpx.HTTPError as exc:
+            return False, f"Connection error: {exc}"
 
     def find_orders(
         self,

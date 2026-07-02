@@ -49,6 +49,7 @@ def run(
     ctx.escalated = True
 
     send_escalation_email(
+        ctx.db,
         subject=f"Escalation #{ticket.id}: {reason}",
         body=(
             f"Conversation: {ctx.conversation.id} ({ctx.conversation.channel}/"

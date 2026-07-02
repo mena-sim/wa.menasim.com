@@ -7,9 +7,10 @@ from typing import Any
 import httpx
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+from sqlalchemy.orm import Session
 
-from app.core.config import get_settings
 from app.core.logging import get_logger
+from app.services import runtime_config
 
 logger = get_logger(__name__)
 
@@ -21,6 +22,7 @@ class TelnyxWebhookVerificationError(ValueError):
 
 
 def verify_webhook(
+    db: Session,
     raw_body: bytes,
     *,
     signature_header: str | None,
@@ -32,7 +34,7 @@ def verify_webhook(
     (skip in local/dev). Raises on an explicit signature failure.
     Mirrors the voxbulk-api telnyx_webhook_security pattern.
     """
-    public_key_b64 = (get_settings().telnyx_webhook_public_key or "").strip()
+    public_key_b64 = (runtime_config.get(db, "telnyx_webhook_public_key") or "").strip()
     if not public_key_b64:
         logger.debug("[telnyx-verify] skipped (no public key configured)")
         return True
@@ -54,28 +56,33 @@ def verify_webhook(
     return True
 
 
-def _headers() -> dict[str, str]:
+def _headers(api_key: str) -> dict[str, str]:
     return {
-        "Authorization": f"Bearer {get_settings().telnyx_api_key}",
+        "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
 
 
-def send_whatsapp(to: str, text: str, *, media_url: str | None = None) -> dict[str, Any]:
+def send_whatsapp(
+    db: Session, to: str, text: str, *, media_url: str | None = None
+) -> dict[str, Any]:
     """Send a WhatsApp message (text, optionally with a media attachment) via Telnyx."""
-    settings = get_settings()
-    if not settings.whatsapp_enabled:
+    if not runtime_config.whatsapp_enabled(db):
         logger.info("[telnyx] WhatsApp not configured; skip send to %s", to)
         return {"ok": False, "skipped": True, "reason": "telnyx_not_configured"}
 
+    api_key = runtime_config.get(db, "telnyx_api_key")
+    wa_from = runtime_config.get(db, "telnyx_whatsapp_from")
+    profile_id = runtime_config.get(db, "telnyx_messaging_profile_id")
+
     payload: dict[str, Any] = {
-        "from": settings.telnyx_whatsapp_from,
+        "from": wa_from,
         "to": to,
         "type": "text",
         "text": text,
     }
-    if settings.telnyx_messaging_profile_id:
-        payload["messaging_profile_id"] = settings.telnyx_messaging_profile_id
+    if profile_id:
+        payload["messaging_profile_id"] = profile_id
     if media_url:
         payload["type"] = "media"
         payload["media_urls"] = [media_url]
@@ -83,7 +90,9 @@ def send_whatsapp(to: str, text: str, *, media_url: str | None = None) -> dict[s
 
     try:
         with httpx.Client(timeout=30.0) as client:
-            resp = client.post(TELNYX_WHATSAPP_MESSAGES_URL, json=payload, headers=_headers())
+            resp = client.post(
+                TELNYX_WHATSAPP_MESSAGES_URL, json=payload, headers=_headers(api_key)
+            )
             ok = resp.status_code < 300
             if not ok:
                 logger.warning("[telnyx] send failed %s: %s", resp.status_code, resp.text[:400])

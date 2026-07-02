@@ -1,0 +1,16 @@
+---
+description: Rules for implementing and modifying the eSIM support agent's callable skills
+globs: ["app/agent/tools/**/*.py", "app/agent/**/*.py"]
+alwaysApply: false
+---
+
+Implement skills exactly as specified in /SKILLS.md at the project root.
+Do not add, rename, remove, or change guardrails for any skill without updating SKILLS.md first — the file is the source of truth, not the code.
+
+Rules:
+- Every skill is a typed function with validated input/output as defined in SKILLS.md.
+- The LLM never writes to the database directly. It only supplies arguments; the backend validates and executes.
+- Guardrails (refund cap, resend limit, price-increase confirmation, etc.) are enforced server-side, never left to prompt instructions alone.
+- Every skill call must be logged: session_id, skill_name, input, output, timestamp.
+- If a requested action has no matching skill, call escalate_human instead of improvising.
+- This rule only applies within this project. Do not copy these instructions into global/user-level Cursor rules.

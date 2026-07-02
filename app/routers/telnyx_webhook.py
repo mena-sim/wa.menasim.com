@@ -39,6 +39,7 @@ async def telnyx_messages(request: Request, db: Session = Depends(get_db)) -> JS
     raw = await request.body()
     try:
         verify_webhook(
+            db,
             raw,
             signature_header=request.headers.get("telnyx-signature-ed25519"),
             timestamp_header=request.headers.get("telnyx-timestamp"),

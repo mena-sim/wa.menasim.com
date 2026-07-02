@@ -61,7 +61,10 @@ def process_inbound(db: Session, inbound: InboundMessage) -> dict[str, Any]:
         media_url=inbound.media_url,
         is_image=inbound.is_image,
     )
-    send_result = send_whatsapp(inbound.sender_id, result.reply, media_url=result.media_url)
+    # When a human has taken over, the AI stays silent; don't auto-send.
+    if result.suppressed or not (result.reply or "").strip():
+        return {"replied": False, "suppressed": result.suppressed, "escalated": result.escalated}
+    send_result = send_whatsapp(db, inbound.sender_id, result.reply, media_url=result.media_url)
     return {
         "replied": True,
         "escalated": result.escalated,
