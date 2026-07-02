@@ -1,20 +1,23 @@
 """Diagnostic: show what WooCommerce returns for an order and what the agent extracts.
 
-Run on the server (repo root, venv active):
+Run on the server from the repo root:
 
-    python scripts/inspect_order.py 105382 hello@menasim.com
-
-It prints the order summary, every meta key (order-level + line-item), and the
-result of extract_esim() — so we can see whether the QR/ICCID are present and
-which key holds them.
+    ./scripts/inspect-order 105382 hello@menasim.com
+    .venv/bin/python3 scripts/inspect_order.py 105382 hello@menasim.com
 """
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
+ROOT = Path(__file__).resolve().parent.parent
+_VENV_PY = ROOT / ".venv" / "bin" / "python3"
+if _VENV_PY.is_file() and Path(sys.executable).resolve() != _VENV_PY.resolve():
+    os.execv(str(_VENV_PY), [str(_VENV_PY), str(Path(__file__).resolve()), *sys.argv[1:]])
+
 # Make the app package importable when run as `python scripts/inspect_order.py`.
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(ROOT))
 
 from app.core.database import SessionLocal, init_db  # noqa: E402
 from app.services.providers.woocommerce import WooCommerceClient  # noqa: E402

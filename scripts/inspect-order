@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Run WooCommerce order inspection using the app virtualenv.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+if [ ! -x ".venv/bin/python3" ]; then
+  echo "Missing .venv — run ./deploy.sh first." >&2
+  exit 1
+fi
+exec .venv/bin/python3 scripts/inspect_order.py "$@"

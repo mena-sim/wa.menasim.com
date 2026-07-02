@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Diagnose WhatsApp voice/image handling for a phone number.
 
-Run on the server (repo root, venv active):
+Run on the server from the repo root:
 
-    python scripts/diagnose_whatsapp.py +447954823445
-    python scripts/diagnose_whatsapp.py +447954823445 --test-url "https://media.telnyx.com/..."
+    ./scripts/diagnose-whatsapp +447954823445
+    .venv/bin/python3 scripts/diagnose_whatsapp.py +447954823445
 
 Shows: voice config, conversation messages (look for 🎤 / 📷), webhook events with media_log.
 """
@@ -12,10 +12,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+_VENV_PY = ROOT / ".venv" / "bin" / "python3"
+if _VENV_PY.is_file() and Path(sys.executable).resolve() != _VENV_PY.resolve():
+    os.execv(str(_VENV_PY), [str(_VENV_PY), str(Path(__file__).resolve()), *sys.argv[1:]])
+
 sys.path.insert(0, str(ROOT))
 
 from sqlalchemy import desc, select  # noqa: E402
