@@ -9,6 +9,7 @@ from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.core.logging import get_logger
 from app.services import runtime_config
 
@@ -112,6 +113,7 @@ def send_whatsapp(
                 api_key,
                 configured_profile=runtime_config.get(db, "telnyx_messaging_profile_id"),
                 from_number=wa_from,
+                app_webhook_url=f"{get_settings().public_base_url.rstrip('/')}/telnyx/webhooks/messages",
             )
             if profile_id:
                 payload["messaging_profile_id"] = profile_id

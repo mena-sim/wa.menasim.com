@@ -265,15 +265,28 @@ export default function Settings({ toast }) {
                   onChange={(e) => setField("telnyx", "telnyx_api_key", e.target.value)} />
               </Field>
               <div className="row2col">
-                <Field label="Messaging profile ID" hint="Telnyx messaging profile UUID (NOT WABA ID). Use Auto-detect if unsure.">
-                  <input placeholder="4e3162a5-13f6-4d12-b246-81705767a0b3" value={g.telnyx.telnyx_messaging_profile_id}
+                <Field label="Messaging profile" hint="Pick the menasim profile (e.g. WA 2-99). Do NOT use the voxbulk profile.">
+                  <select
+                    value={g.telnyx.telnyx_messaging_profile_id}
+                    onChange={(e) => setField("telnyx", "telnyx_messaging_profile_id", e.target.value)}
+                  >
+                    <option value="">— select profile —</option>
+                    {(waStatus?.messaging_profiles || []).map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name} — {p.webhook_url || "no webhook"}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                <Field label="Or paste profile UUID manually">
+                  <input placeholder="uuid…" value={g.telnyx.telnyx_messaging_profile_id}
                     onChange={(e) => setField("telnyx", "telnyx_messaging_profile_id", e.target.value)} />
                 </Field>
-                <Field label="Webhook public key (Ed25519)">
-                  <input type="password" placeholder="base64 public key" value={g.telnyx.telnyx_webhook_public_key}
-                    onChange={(e) => setField("telnyx", "telnyx_webhook_public_key", e.target.value)} />
-                </Field>
               </div>
+              <Field label="Webhook public key (Ed25519)">
+                <input type="password" placeholder="base64 public key" value={g.telnyx.telnyx_webhook_public_key}
+                  onChange={(e) => setField("telnyx", "telnyx_webhook_public_key", e.target.value)} />
+              </Field>
               <Field label="Webhook URL (configure this in the Telnyx portal)" hint="Must point to wa.menasim.com — Telnyx sends inbound WhatsApp messages here.">
                 <input readOnly value={status.webhook_url || "https://wa.menasim.com/telnyx/webhooks/messages"} />
               </Field>
@@ -311,8 +324,25 @@ export default function Settings({ toast }) {
                 <div className="hint" style={{ marginBottom: 12 }}>
                   Webhook: {waStatus.webhook_url} · WA conversations: {waStatus.whatsapp_conversations} ·
                   processed events: {waStatus.processed_webhook_events}
-                  {waStatus.suggested_profile_id && (
-                    <div style={{ marginTop: 6 }}>Suggested profile: {waStatus.suggested_profile_id}</div>
+                  {waStatus.profile_mismatch && (
+                    <div style={{ color: "var(--warn, #b45309)", marginTop: 6 }}>
+                      ⚠ Number is on <strong>{waStatus.number_profile_name}</strong> (voxbulk) —
+                      inbound messages are NOT reaching this app. Click Auto-detect.
+                    </div>
+                  )}
+                  {(waStatus.messaging_profiles || []).length > 0 && (
+                    <div style={{ marginTop: 8, fontSize: "0.9em" }}>
+                      <strong>Telnyx profiles in your account:</strong>
+                      <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>
+                        {waStatus.messaging_profiles.map((p) => (
+                          <li key={p.id}>
+                            {p.name}: {p.webhook_url || "no webhook"}
+                            {p.id === waStatus.app_profile_id ? " ← menasim app" : ""}
+                            {p.id === waStatus.number_profile_id ? " ← number assigned here" : ""}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
                   )}
                   {waStatus.suggested_waba_id && (
                     <div style={{ marginTop: 6 }}>Suggested WABA: {waStatus.suggested_waba_id}</div>

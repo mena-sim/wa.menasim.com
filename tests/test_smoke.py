@@ -152,6 +152,29 @@ def test_parse_inbound_normalizes_whatsapp_prefix():
     assert inbound.sender_id == "+447700900999"
 
 
+def test_pick_app_messaging_profile():
+    from app.services.telnyx_resolve import pick_app_messaging_profile
+
+    profiles = [
+        {"id": "vox-id", "name": "Voxbulk", "webhook_url": "https://api.voxbulk.com/telnyx/webhooks/messages"},
+        {"id": "wa-id", "name": "WA 2-99", "webhook_url": "https://api.voxbulk.com/telnyx/webhooks/messages"},
+        {"id": "other-id", "name": "Other", "webhook_url": "https://example.com/hook"},
+    ]
+    picked = pick_app_messaging_profile(
+        profiles,
+        configured_profile_id="wa-id",
+        app_webhook_url="https://wa.menasim.com/telnyx/webhooks/messages",
+    )
+    assert picked["id"] == "wa-id"
+
+    picked2 = pick_app_messaging_profile(
+        profiles,
+        configured_profile_id="",
+        app_webhook_url="https://wa.menasim.com/telnyx/webhooks/messages",
+    )
+    assert picked2 is None or picked2["id"] != "vox-id"
+
+
 def test_whatsapp_inbound_agent_pipeline(db):
     from app.services import telnyx_diagnostics
 

@@ -17,6 +17,7 @@ from app.services.telnyx_resolve import (
     is_uuid,
     lookup_messaging_profile_for_number,
     looks_like_waba_id,
+    pick_app_messaging_profile,
 )
 from app.services.channels.whatsapp_telnyx_channel import WHATSAPP_CHANNEL, parse_inbound
 from app.services.telnyx_client import normalize_e164, send_whatsapp
@@ -75,6 +76,12 @@ def discover(db: Session) -> dict[str, Any]:
         "messaging_profiles": [],
         "suggested_profile_id": None,
         "suggested_waba_id": None,
+        "number_profile_id": None,
+        "number_profile_name": None,
+        "number_profile_webhook": None,
+        "app_profile_id": None,
+        "app_profile_name": None,
+        "profile_mismatch": False,
         "warnings": [],
     }
     if not api_key:
@@ -106,23 +113,60 @@ def discover(db: Session) -> dict[str, Any]:
                 )
 
             profiles = _list_messaging_profiles(client, api_key)
+            profile_rows = []
             for p in profiles:
-                out["messaging_profiles"].append(
+                profile_rows.append(
                     {
                         "id": str(p.get("id") or ""),
                         "name": str(p.get("name") or ""),
                         "webhook_url": str(p.get("webhook_url") or ""),
                     }
                 )
+            out["messaging_profiles"] = profile_rows
 
+            target_webhook = webhook_url()
+            app_profile = pick_app_messaging_profile(
+                profiles,
+                configured_profile_id=configured_profile,
+                app_webhook_url=target_webhook,
+            )
+            if app_profile:
+                out["app_profile_id"] = app_profile.get("id")
+                out["app_profile_name"] = app_profile.get("name")
+                out["suggested_profile_id"] = app_profile.get("id")
+
+            number_profile_id = None
             if from_number:
-                resolved = lookup_messaging_profile_for_number(client, api_key, from_number)
-                if resolved:
-                    out["suggested_profile_id"] = resolved
-                elif configured_profile and is_uuid(configured_profile):
-                    # Fall back to configured UUID if it exists in the account.
-                    if any(p["id"] == configured_profile for p in out["messaging_profiles"]):
-                        out["suggested_profile_id"] = configured_profile
+                number_profile_id = lookup_messaging_profile_for_number(client, api_key, from_number)
+            if number_profile_id:
+                out["number_profile_id"] = number_profile_id
+                num_p = next((p for p in profile_rows if p["id"] == number_profile_id), None)
+                if num_p:
+                    out["number_profile_name"] = num_p.get("name")
+                    out["number_profile_webhook"] = num_p.get("webhook_url")
+
+            if (
+                out["app_profile_id"]
+                and out["number_profile_id"]
+                and out["app_profile_id"] != out["number_profile_id"]
+            ):
+                out["profile_mismatch"] = True
+                out["warnings"].append(
+                    f"INBOUND ROUTING ISSUE: {from_number} is assigned to profile "
+                    f"'{out.get('number_profile_name')}' (webhook: {out.get('number_profile_webhook')}). "
+                    f"Messages go there, NOT to {target_webhook}. "
+                    f"Click Auto-detect to move the number to '{out.get('app_profile_name')}'."
+                )
+            elif out.get("app_profile_id"):
+                app_wh = next(
+                    (p["webhook_url"] for p in profile_rows if p["id"] == out["app_profile_id"]),
+                    "",
+                )
+                if app_wh.rstrip("/") != target_webhook.rstrip("/"):
+                    out["warnings"].append(
+                        f"Profile '{out.get('app_profile_name')}' webhook is '{app_wh}' — "
+                        f"Auto-detect will set it to {target_webhook}."
+                    )
 
             if configured_profile and looks_like_waba_id(configured_profile):
                 out["warnings"].append(
@@ -133,15 +177,11 @@ def discover(db: Session) -> dict[str, Any]:
                 if not any(p["id"] == configured_profile for p in out["messaging_profiles"]):
                     out["warnings"].append(
                         f"Messaging profile '{configured_profile}' was not found in your Telnyx account. "
-                        "If this is your Telnyx account ID, use the messaging profile UUID instead."
+                        "Pick the correct profile from the list below (e.g. WA 2-99)."
                     )
-                    if out["suggested_profile_id"]:
-                        out["warnings"].append(
-                            f"Suggested messaging profile for {from_number}: {out['suggested_profile_id']}"
-                        )
             elif not configured_profile and out["suggested_profile_id"]:
                 out["warnings"].append(
-                    f"Messaging profile ID is empty. Suggested: {out['suggested_profile_id']}"
+                    f"Select messaging profile '{out.get('app_profile_name')}' and save, then run Auto-detect."
                 )
 
             if configured_waba and out["suggested_waba_id"] and configured_waba != out["suggested_waba_id"]:
@@ -156,34 +196,38 @@ def discover(db: Session) -> dict[str, Any]:
 
 
 def auto_configure(db: Session) -> dict[str, Any]:
-    """Pull the correct messaging profile + WABA ID from Telnyx and wire up webhooks."""
+    """Wire menasim profile: correct IDs, webhook URL, and number assignment."""
     info = discover(db)
     changed: list[str] = []
     actions: list[str] = []
     api_key = runtime_config.get(db, "telnyx_api_key")
     from_number = normalize_e164(runtime_config.get(db, "telnyx_whatsapp_from"))
     target_webhook = webhook_url()
-    profile_id = info.get("suggested_profile_id") or (
-        runtime_config.get(db, "telnyx_messaging_profile_id") or ""
-    ).strip()
+
+    profile_id = (
+        info.get("app_profile_id")
+        or info.get("suggested_profile_id")
+        or (runtime_config.get(db, "telnyx_messaging_profile_id") or "").strip()
+    )
 
     if info.get("suggested_waba_id"):
         runtime_config.set_value(db, "whatsapp_business_id", str(info["suggested_waba_id"]))
         changed.append("whatsapp_business_id")
-    if info.get("suggested_profile_id"):
-        runtime_config.set_value(db, "telnyx_messaging_profile_id", str(info["suggested_profile_id"]))
+    if profile_id and is_uuid(str(profile_id)):
+        runtime_config.set_value(db, "telnyx_messaging_profile_id", str(profile_id))
         changed.append("telnyx_messaging_profile_id")
-        profile_id = str(info["suggested_profile_id"])
 
-    if api_key and profile_id and is_uuid(profile_id):
+    if api_key and profile_id and is_uuid(str(profile_id)):
         try:
             with httpx.Client(timeout=20.0) as client:
                 from app.services.telnyx_resolve import assign_number_to_profile, ensure_profile_webhook
 
-                ok, msg = ensure_profile_webhook(client, api_key, profile_id, target_webhook)
+                ok, msg = ensure_profile_webhook(client, api_key, str(profile_id), target_webhook)
                 actions.append(msg)
                 if from_number:
-                    ok2, msg2 = assign_number_to_profile(client, api_key, from_number, profile_id)
+                    ok2, msg2 = assign_number_to_profile(
+                        client, api_key, from_number, str(profile_id)
+                    )
                     actions.append(msg2)
                     if ok2:
                         changed.append("number_assigned")
@@ -195,13 +239,18 @@ def auto_configure(db: Session) -> dict[str, Any]:
     if changed:
         db.commit()
 
-    ok = bool(info.get("suggested_profile_id") or "webhook_url" in changed)
+    ok = bool(profile_id and is_uuid(str(profile_id)))
     return {
         "ok": ok,
         "message": (
-            "Telnyx WhatsApp configured (IDs + webhook URL)."
-            if ok
-            else "Could not auto-detect IDs. Check sender number and Telnyx API key."
+            f"Moved {from_number} to profile '{info.get('app_profile_name')}' "
+            f"and set webhook to {target_webhook}."
+            if ok and info.get("profile_mismatch")
+            else (
+                "Telnyx WhatsApp profile configured."
+                if ok
+                else "Pick the menasim messaging profile (e.g. WA 2-99) in Settings → Telnyx, save, then retry."
+            )
         ),
         "changed": changed,
         "actions": actions,
@@ -294,8 +343,15 @@ def test_connection(db: Session) -> dict[str, Any]:
                 api_key,
                 configured_profile=configured_profile,
                 from_number=from_number,
+                app_webhook_url=expected_webhook,
             )
             warnings.extend(resolve_warnings)
+
+            if discovered.get("profile_mismatch"):
+                warnings.append(
+                    "Your WhatsApp number is still routed to another service (voxbulk). "
+                    "Click Auto-detect to fix inbound routing."
+                )
 
             wa_match = next(
                 (
@@ -322,33 +378,41 @@ def test_connection(db: Session) -> dict[str, Any]:
                 if prof.status_code < 300:
                     pdata = prof.json().get("data") or {}
                     portal_webhook = (pdata.get("webhook_url") or "").strip()
-                    details.append(f"Messaging profile: {pdata.get('name') or profile_id}")
+                    details.append(
+                        f"App profile: {pdata.get('name') or profile_id} ({profile_id})"
+                    )
                     if portal_webhook:
-                        details.append(f"Telnyx webhook: {portal_webhook}")
+                        details.append(f"App profile webhook: {portal_webhook}")
                         if portal_webhook.rstrip("/") != expected_webhook.rstrip("/"):
                             warnings.append(
-                                f"Telnyx profile webhook is '{portal_webhook}' but this app expects "
-                                f"'{expected_webhook}'."
+                                f"Profile '{pdata.get('name')}' webhook is '{portal_webhook}'. "
+                                f"Click Auto-detect to set '{expected_webhook}'."
                             )
                     else:
-                        warnings.append("No webhook URL is set on the Telnyx messaging profile.")
+                        warnings.append("No webhook on menasim profile — run Auto-detect.")
                 else:
                     warnings.append(
                         f"Could not load messaging profile {profile_id} (HTTP {prof.status_code})."
                     )
             else:
                 warnings.append(
-                    "No messaging profile could be resolved. Click 'Auto-detect from Telnyx' in Settings."
+                    "No menasim messaging profile selected. Pick 'WA 2-99' in Settings → Telnyx."
                 )
 
-            if discovered.get("suggested_profile_id") and discovered["suggested_profile_id"] != configured_profile:
-                details.append(f"Suggested profile ID: {discovered['suggested_profile_id']}")
+            if discovered.get("number_profile_name"):
+                details.append(
+                    f"Number currently on: {discovered['number_profile_name']} "
+                    f"({discovered.get('number_profile_webhook') or 'no webhook'})"
+                )
 
     except httpx.HTTPError as exc:
         return {"ok": False, "message": f"Connection error: {exc}"}
 
     hard_fail = any(
-        "not listed under Telnyx" in w or "WABA ID" in w and "ignoring" not in w
+        "not listed under Telnyx" in w
+        or ("WABA ID" in w and "ignoring" not in w)
+        or "INBOUND ROUTING ISSUE" in w
+        or discovered.get("profile_mismatch")
         for w in warnings
     )
     msg = "Telnyx WhatsApp configuration looks good."
