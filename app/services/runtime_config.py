@@ -31,9 +31,24 @@ SCHEMA: dict[str, tuple[str, bool, str | None, Any]] = {
     "wc_consumer_key": ("wordpress", True, "wc_consumer_key", ""),
     "wc_consumer_secret": ("wordpress", True, "wc_consumer_secret", ""),
     "wc_api_version": ("wordpress", False, None, "wc/v3"),
-    "wc_esim_iccid_meta": ("wordpress", False, "wc_esim_iccid_meta", "iccid,_iccid,esim_iccid"),
-    "wc_esim_qr_meta": ("wordpress", False, "wc_esim_qr_meta", "qr,qr_code,esim_qr,activation_code"),
-    "wc_esim_status_meta": ("wordpress", False, "wc_esim_status_meta", "esim_status,status"),
+    "wc_esim_iccid_meta": (
+        "wordpress",
+        False,
+        "wc_esim_iccid_meta",
+        "order_iccid,airalo_data_sims_info_iccid,iccid,_iccid,esim_iccid",
+    ),
+    "wc_esim_qr_meta": (
+        "wordpress",
+        False,
+        "wc_esim_qr_meta",
+        "airalo_data_sims_info_qrcode,order_lpa,airalo_data_sims_info_qrcode_url,qr,qr_code,esim_qr,activation_code",
+    ),
+    "wc_esim_status_meta": (
+        "wordpress",
+        False,
+        "wc_esim_status_meta",
+        "airalo_data_sims_data_status,esim_status,status",
+    ),
     "wc_sync_orders": ("wordpress", False, None, "true"),
     "wc_sync_kb": ("wordpress", False, None, "false"),
     # Agent & KB

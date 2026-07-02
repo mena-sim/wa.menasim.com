@@ -35,9 +35,12 @@ class Settings(BaseSettings):
     wc_base_url: str = ""
     wc_consumer_key: str = ""
     wc_consumer_secret: str = ""
-    wc_esim_iccid_meta: str = "iccid,_iccid,esim_iccid"
-    wc_esim_qr_meta: str = "qr,qr_code,esim_qr,activation_code"
-    wc_esim_status_meta: str = "esim_status,status"
+    wc_esim_iccid_meta: str = "order_iccid,airalo_data_sims_info_iccid,iccid,_iccid,esim_iccid"
+    wc_esim_qr_meta: str = (
+        "airalo_data_sims_info_qrcode,order_lpa,airalo_data_sims_info_qrcode_url,"
+        "qr,qr_code,esim_qr,activation_code"
+    )
+    wc_esim_status_meta: str = "airalo_data_sims_data_status,esim_status,status"
 
     # Telnyx WhatsApp
     telnyx_api_key: str = ""

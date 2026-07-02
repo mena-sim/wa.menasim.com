@@ -24,14 +24,6 @@ def _csv(value: str) -> list[str]:
     return [part.strip() for part in (value or "").split(",") if part.strip()]
 
 
-def _looks_like_qr(key: str, value: str) -> bool:
-    k = key.lower()
-    if any(h in k for h in _QR_KEY_HINTS):
-        return True
-    v = value.strip()
-    return bool(_LPA_RE.match(v) or v.lower().startswith("lpa:") or _QR_IMG_RE.match(v))
-
-
 def _digits(value: str) -> str:
     return re.sub(r"\D", "", value or "")
 
@@ -130,15 +122,24 @@ class WooCommerceClient:
 
     def _auto_qr(self, meta: list[dict[str, Any]]) -> str | None:
         pairs = [
-            (str(m.get("key", "")), str(m.get("value") or ""))
+            (str(m.get("key", "")), str(m.get("value") or "").strip())
             for m in meta
             if isinstance(m, dict) and m.get("value")
         ]
-        # 1) A meta key/value that clearly holds a QR / activation payload or image.
+        # 1) A full LPA activation string anywhere wins (strongest, key-agnostic).
+        #    This beats partial fields like "..._lpa" that hold only the SM-DP+ host.
+        for _key, val in pairs:
+            if _LPA_RE.match(val) or val.lower().startswith("lpa:"):
+                return val
+        # 2) A hosted QR image URL (…​.png/.jpg/…).
+        for _key, val in pairs:
+            if _QR_IMG_RE.match(val):
+                return val
+        # 3) A QR-hinted key whose value looks like a real payload (contains "$").
         for key, val in pairs:
-            if _looks_like_qr(key, val):
-                return val.strip()
-        # 2) Assemble an LPA string from SM-DP+ address + matching/confirmation code.
+            if any(h in key.lower() for h in _QR_KEY_HINTS) and "$" in val:
+                return val
+        # 4) Assemble an LPA from SM-DP+ address + matching/confirmation code.
         smdp = next(
             (v for k, v in pairs if any(h in k.lower() for h in _SMDP_KEY_HINTS)), None
         )
@@ -146,8 +147,8 @@ class WooCommerceClient:
             (v for k, v in pairs if any(h in k.lower() for h in _MATCHING_KEY_HINTS)), None
         )
         if smdp and matching:
-            host = smdp.strip().replace("LPA:", "").lstrip("1$").split("$")[0]
-            return f"LPA:1${host}${matching.strip()}"
+            host = smdp.replace("LPA:", "").lstrip("1$").split("$")[0]
+            return f"LPA:1${host}${matching}"
         return None
 
     def _auto_iccid(self, meta: list[dict[str, Any]]) -> str | None:
@@ -168,7 +169,7 @@ class WooCommerceClient:
             if not isinstance(m, dict) or not m.get("value"):
                 continue
             key = str(m.get("key", "")).lower()
-            if "esim" in key and any(h in key for h in _STATUS_KEY_HINTS):
+            if "sim" in key and any(h in key for h in _STATUS_KEY_HINTS):
                 return str(m.get("value")).strip()
         return None
 
