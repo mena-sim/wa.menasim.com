@@ -112,7 +112,7 @@ async def chat_image(
         is_image=True,
         media_content_type=file.content_type or "image/jpeg",
     )
-    prepared = inbound_media.prepare_inbound_media(db, inbound)
+    prepared, _media_log = inbound_media.prepare_inbound_media(db, inbound)
     if isinstance(prepared, str):
         return {
             "uploaded_url": media_url,

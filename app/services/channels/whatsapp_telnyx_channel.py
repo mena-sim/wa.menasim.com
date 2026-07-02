@@ -76,15 +76,17 @@ def _classify_media(
         return False, True, False
     if wmt in ("document", "video", "sticker") or name_kind in ("document", "video"):
         return False, False, True
+    # WhatsApp voice notes often have media URL but no content_type — treat as audio, not image.
+    if media_url and not ct and not name_kind and not wmt:
+        return True, False, False
     if media_url and not ct.startswith("image/") and not ct.startswith("audio/"):
-        # Unknown attachment with a URL — only images accepted for non-audio.
         if name_kind == "image":
             return False, True, False
         if name_kind == "audio":
             return True, False, False
         if name_kind:
             return False, False, True
-    return False, False, bool(media_url and not ct.startswith("image/") and not ct.startswith("audio/"))
+    return False, False, False
 
 
 def parse_inbound(body: dict[str, Any]) -> InboundMessage | None:
@@ -171,10 +173,24 @@ def process_inbound(db: Session, inbound: InboundMessage) -> dict[str, Any]:
         convo.handed_over = False
         db.commit()
 
-    prepared = inbound_media.prepare_inbound_media(db, inbound)
+    parse_log = {
+        "parsed_audio": inbound.is_audio,
+        "parsed_image": inbound.is_image,
+        "parsed_unsupported": inbound.is_unsupported_media,
+        "content_type": inbound.media_content_type or "",
+    }
+
+    prepared, media_log = inbound_media.prepare_inbound_media(db, inbound)
+    media_log = {"parse": parse_log, **media_log}
+
     if isinstance(prepared, str):
         send_whatsapp(db, inbound.sender_id, prepared)
-        return {"replied": True, "media_rejected": True, "escalated": False}
+        return {
+            "replied": True,
+            "media_rejected": True,
+            "escalated": False,
+            "media_log": media_log,
+        }
     inbound = prepared
 
     result = handle_message(
@@ -186,7 +202,12 @@ def process_inbound(db: Session, inbound: InboundMessage) -> dict[str, Any]:
         is_image=inbound.is_image,
     )
     if result.suppressed or not (result.reply or "").strip():
-        return {"replied": False, "suppressed": result.suppressed, "escalated": result.escalated}
+        return {
+            "replied": False,
+            "suppressed": result.suppressed,
+            "escalated": result.escalated,
+            "media_log": media_log,
+        }
     send_result = send_whatsapp(db, inbound.sender_id, result.reply, media_url=result.media_url)
     if not send_result.get("ok"):
         logger.warning(
@@ -199,4 +220,6 @@ def process_inbound(db: Session, inbound: InboundMessage) -> dict[str, Any]:
         "replied": True,
         "escalated": result.escalated,
         "send": send_result,
+        "media_log": media_log,
+        "conversation_id": result.conversation_id,
     }

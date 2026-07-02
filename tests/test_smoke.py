@@ -212,10 +212,12 @@ def test_prepare_inbound_media_transcribes_audio(db, monkeypatch):
         media_url="https://media.telnyx.com/v.ogg",
         media_content_type="audio/ogg",
     )
-    out = inbound_media.prepare_inbound_media(db, inbound)
+    out, media_log = inbound_media.prepare_inbound_media(db, inbound)
     assert isinstance(out, InboundMessage)
+    assert out.text.startswith("🎤")
     assert "الشريحة" in out.text
     assert out.is_audio is False
+    assert media_log.get("action") == "transcribed"
 
 
 def test_parse_inbound_accepts_whatsapp_string_from():

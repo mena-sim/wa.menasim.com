@@ -121,6 +121,7 @@ async def telnyx_messages(request: Request, db: Session = Depends(get_db)) -> JS
         _mark_processed(db, inbound.event_id)
 
     send = result.get("send") or {}
+    media_log = result.get("media_log")
     if result.get("replied") and send and not send.get("ok"):
         status = "agent_ok_send_failed"
         detail = str(send.get("detail") or send.get("error") or "")[:500]
@@ -133,6 +134,12 @@ async def telnyx_messages(request: Request, db: Session = Depends(get_db)) -> JS
     else:
         status = "no_reply"
         detail = ""
+
+    if media_log:
+        try:
+            detail = json.dumps(media_log, ensure_ascii=False)[:4000]
+        except (TypeError, ValueError):
+            detail = str(media_log)[:4000]
 
     webhook_log.record(
         db,
