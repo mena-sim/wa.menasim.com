@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import ast
+import json
 from typing import Any
 
 import httpx
@@ -17,6 +19,7 @@ WHATSAPP_CHANNEL = "whatsapp"
 
 _AUDIO_EXT = (".ogg", ".opus", ".amr", ".m4a", ".mp3", ".aac", ".webm")
 _IMAGE_EXT = (".jpg", ".jpeg", ".png", ".webp", ".gif")
+_MEDIA_KEYS = ("audio", "image", "video", "document", "sticker")
 
 
 def _phone_from_field(value: Any) -> str:
@@ -34,13 +37,100 @@ def _phone_from_field(value: Any) -> str:
     return ""
 
 
-def _extract_text(payload: dict[str, Any]) -> str:
+def _parse_maybe_dict(value: Any) -> dict[str, Any] | None:
+    """Parse dict payloads Telnyx sometimes embeds as JSON or Python repr strings."""
+    if isinstance(value, dict):
+        return value
+    if not isinstance(value, str):
+        return None
+    s = value.strip()
+    if not s.startswith("{"):
+        return None
+    try:
+        obj = json.loads(s)
+        return obj if isinstance(obj, dict) else None
+    except json.JSONDecodeError:
+        pass
+    try:
+        obj = ast.literal_eval(s)
+        return obj if isinstance(obj, dict) else None
+    except (ValueError, SyntaxError):
+        return None
+
+
+def _looks_like_whatsapp_message(obj: dict[str, Any]) -> bool:
+    if str(obj.get("type") or "") in {"text", "audio", "image", "video", "document", "sticker"}:
+        return True
+    return any(isinstance(obj.get(key), dict) for key in _MEDIA_KEYS) or isinstance(obj.get("text"), dict)
+
+
+def _resolve_whatsapp_message(payload: dict[str, Any]) -> dict[str, Any]:
+    """Normalize Telnyx/Meta WhatsApp message shapes into one dict."""
+    wm = payload.get("whatsapp_message")
+    parsed = _parse_maybe_dict(wm)
+    if parsed and _looks_like_whatsapp_message(parsed):
+        return parsed
+    if isinstance(wm, dict) and _looks_like_whatsapp_message(wm):
+        return wm
+
+    # Some Telnyx webhooks put the whole inbound WA object in payload.text as a stringified dict.
+    parsed_text = _parse_maybe_dict(payload.get("text"))
+    if parsed_text and _looks_like_whatsapp_message(parsed_text):
+        return parsed_text
+    return {}
+
+
+def _media_url_from_attachment(attachment: dict[str, Any]) -> str | None:
+    for key in ("link", "url", "href"):
+        val = attachment.get(key)
+        if val:
+            return str(val)
+    return None
+
+
+def _infer_wm_type(wm: dict[str, Any]) -> str:
+    wm_type = str(wm.get("type") or "").lower()
+    if wm_type:
+        return wm_type
+    for kind in _MEDIA_KEYS:
+        if isinstance(wm.get(kind), dict):
+            return kind
+    if isinstance(wm.get("text"), dict):
+        return "text"
+    return ""
+
+
+def _extract_text(payload: dict[str, Any], wm: dict[str, Any]) -> str:
+    if wm:
+        if _infer_wm_type(wm) == "text" and isinstance(wm.get("text"), dict):
+            return str(wm["text"].get("body") or "").strip()
+        if isinstance(wm.get("text"), dict):
+            return str(wm["text"].get("body") or "").strip()
+        if isinstance(wm.get("text"), str):
+            return wm["text"].strip()
+
     text = payload.get("text") or payload.get("body") or ""
-    if not text and isinstance(payload.get("whatsapp_message"), dict):
-        wm = payload["whatsapp_message"]
-        if wm.get("type") == "text" and isinstance(wm.get("text"), dict):
-            text = wm["text"].get("body") or ""
-    return str(text or "").strip()
+    if isinstance(text, str) and not _parse_maybe_dict(text):
+        return str(text).strip()
+    return ""
+
+
+def _extract_media_from_wm(
+    wm: dict[str, Any],
+) -> tuple[str | None, str, str, str]:
+    """Return (media_url, content_type, filename, wm_type)."""
+    wm_type = _infer_wm_type(wm)
+    if wm_type in _MEDIA_KEYS and isinstance(wm.get(wm_type), dict):
+        block = wm[wm_type]
+        media_url = _media_url_from_attachment(block)
+        content_type = str(block.get("mime_type") or block.get("content_type") or "")
+        filename = str(block.get("filename") or block.get("name") or "")
+        if wm_type == "audio" and not content_type:
+            content_type = "audio/ogg"
+        if wm_type == "image" and not content_type:
+            content_type = "image/jpeg"
+        return media_url, content_type, filename, wm_type
+    return None, "", "", wm_type
 
 
 def _guess_type_from_name(name: str) -> str:
@@ -106,9 +196,13 @@ def parse_inbound(body: dict[str, Any]) -> InboundMessage | None:
 
     sender = _phone_from_field(payload.get("from"))
     if not sender:
+        wm_early = _resolve_whatsapp_message(payload)
+        sender = _phone_from_field(wm_early.get("from"))
+    if not sender:
         return None
 
-    text = _extract_text(payload)
+    wm = _resolve_whatsapp_message(payload)
+    text = _extract_text(payload, wm)
     media_url = None
     content_type = ""
     filename = ""
@@ -121,27 +215,11 @@ def parse_inbound(body: dict[str, Any]) -> InboundMessage | None:
         content_type = str(first.get("content_type") or "")
         filename = str(first.get("filename") or first.get("name") or "")
 
-    wm = payload.get("whatsapp_message") or {}
-    if isinstance(wm, dict):
-        wm_type = str(wm.get("type") or "")
-        if wm_type == "audio" and isinstance(wm.get("audio"), dict):
-            audio = wm["audio"]
-            media_url = audio.get("link") or media_url
-            filename = filename or str(audio.get("filename") or "")
-            content_type = content_type or "audio/ogg"
-        elif wm_type == "image" and isinstance(wm.get("image"), dict):
-            image = wm["image"]
-            media_url = image.get("link") or media_url
-            filename = filename or str(image.get("filename") or "")
-            content_type = content_type or "image/jpeg"
-        elif wm_type == "document" and isinstance(wm.get("document"), dict):
-            doc = wm["document"]
-            media_url = doc.get("link") or media_url
-            filename = filename or str(doc.get("filename") or "")
-        elif wm_type == "video" and isinstance(wm.get("video"), dict):
-            vid = wm["video"]
-            media_url = vid.get("link") or media_url
-            filename = filename or str(vid.get("filename") or "")
+    if wm:
+        wm_media_url, wm_content_type, wm_filename, wm_type = _extract_media_from_wm(wm)
+        media_url = wm_media_url or media_url
+        content_type = wm_content_type or content_type
+        filename = wm_filename or filename
 
     is_audio, is_image, is_unsupported = _classify_media(
         media_url=media_url,
@@ -178,6 +256,8 @@ def process_inbound(db: Session, inbound: InboundMessage) -> dict[str, Any]:
         "parsed_image": inbound.is_image,
         "parsed_unsupported": inbound.is_unsupported_media,
         "content_type": inbound.media_content_type or "",
+        "has_media_url": bool(inbound.media_url),
+        "text_len": len(inbound.text or ""),
     }
 
     prepared, media_log = inbound_media.prepare_inbound_media(db, inbound)

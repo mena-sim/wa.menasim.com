@@ -171,6 +171,82 @@ def test_classify_whatsapp_voice_note():
     assert inbound.is_image is False
 
 
+def test_parse_inbound_telnyx_embedded_audio_dict_in_text():
+    """Telnyx sometimes puts the WA audio object in payload.text as a Python dict string."""
+    from app.services.channels.whatsapp_telnyx_channel import parse_inbound
+
+    audio_url = "https://rcs-outbound.us-central-1.telnyxcloudstorage.com/voice.ogg"
+    text_blob = (
+        "{'audio': {'id': '1056246466759040', "
+        "'mime_type': 'audio/ogg; codecs=opus', "
+        f"'url': '{audio_url}'}}}}"
+    )
+    body = {
+        "data": {
+            "event_type": "message.received",
+            "payload": {
+                "id": "voice-2",
+                "from": "+447954823445",
+                "text": text_blob,
+            },
+        }
+    }
+    inbound = parse_inbound(body)
+    assert inbound is not None
+    assert inbound.is_audio is True
+    assert inbound.media_url == audio_url
+    assert inbound.text == ""
+
+
+def test_parse_inbound_telnyx_embedded_text_dict_in_text():
+    from app.services.channels.whatsapp_telnyx_channel import parse_inbound
+
+    text_blob = (
+        "{'foreign_id': 'wamid.test', 'from': '+447954823445', "
+        "'id': 'fd7e35f9-9bd9-486a-af68-a668e003a743', "
+        "'text': {'body': 'مرحبا كيف الحال'}}"
+    )
+    body = {
+        "data": {
+            "event_type": "message.received",
+            "payload": {
+                "id": "text-1",
+                "from": "+447954823445",
+                "text": text_blob,
+            },
+        }
+    }
+    inbound = parse_inbound(body)
+    assert inbound is not None
+    assert inbound.text == "مرحبا كيف الحال"
+    assert inbound.is_audio is False
+
+
+def test_parse_inbound_audio_url_field():
+    from app.services.channels.whatsapp_telnyx_channel import parse_inbound
+
+    body = {
+        "data": {
+            "event_type": "message.received",
+            "payload": {
+                "id": "voice-3",
+                "from": "+447700900999",
+                "whatsapp_message": {
+                    "type": "audio",
+                    "audio": {
+                        "url": "https://rcs-outbound.us-central-1.telnyxcloudstorage.com/a.ogg",
+                        "mime_type": "audio/ogg; codecs=opus",
+                    },
+                },
+            },
+        }
+    }
+    inbound = parse_inbound(body)
+    assert inbound is not None
+    assert inbound.is_audio is True
+    assert "telnyxcloudstorage.com" in (inbound.media_url or "")
+
+
 def test_classify_whatsapp_document_rejected():
     from app.services.channels.whatsapp_telnyx_channel import parse_inbound
 
