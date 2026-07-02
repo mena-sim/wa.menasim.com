@@ -1,5 +1,5 @@
 [Unit]
-Description=Menasim WA Support (FastAPI / uvicorn)
+Description=Menasim WA Support (FastAPI / gunicorn + uvicorn workers)
 After=network.target mysqld.service mysql.service
 
 [Service]
@@ -8,7 +8,7 @@ User=www
 Group=www
 WorkingDirectory=/www/wamena
 Environment=PATH=/www/wamena/.venv/bin
-ExecStart=/www/wamena/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 2
+ExecStart=/www/wamena/.venv/bin/gunicorn app.main:app --workers 2 --worker-class uvicorn.workers.UvicornWorker --bind 127.0.0.1:8000 --chdir /www/wamena
 Restart=always
 RestartSec=3
 
