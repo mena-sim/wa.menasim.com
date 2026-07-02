@@ -145,6 +145,7 @@ export default function Settings({ toast }) {
     }
   }
 
+  async function autoConfigureWhatsapp() {
     setWaBusy("auto");
     try {
       const res = await api.autoConfigureWhatsapp();
