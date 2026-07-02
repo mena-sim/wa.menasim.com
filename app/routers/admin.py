@@ -14,7 +14,7 @@ from app.core.logging import get_logger
 from app.models.conversation import Conversation
 from app.models.kb_document import KbDocument
 from app.models.message import Message
-from app.services import runtime_config
+from app.services import runtime_config, notify
 from app.services.kb import distill, docs, ingest, store
 from app.services.kb.docs import KbDocError
 from app.services.providers.woocommerce import WooCommerceClient
@@ -103,6 +103,9 @@ def test_config(
         return {"ok": ok, "message": msg}
     if group == "voice":
         return _test_deepinfra(db)
+    if group == "smtp":
+        ok, msg = _test_smtp(db)
+        return {"ok": ok, "message": msg}
     raise HTTPException(status_code=400, detail="No connection test for this group")
 
 
@@ -160,6 +163,24 @@ def _test_telnyx(db: Session) -> dict:
         return {"ok": False, "message": f"HTTP {resp.status_code}: check the API key."}
     except httpx.HTTPError as exc:
         return {"ok": False, "message": f"Connection error: {exc}"}
+
+
+def _test_smtp(db: Session) -> tuple[bool, str]:
+    return notify.test_smtp_connection(db)
+
+
+class SmtpTestSendIn(BaseModel):
+    to: str = ""
+
+
+@router.post("/smtp/test-send")
+def smtp_test_send(
+    payload: SmtpTestSendIn,
+    db: Session = Depends(get_db),
+    _: str = Depends(admin_auth.require_admin),
+) -> dict:
+    ok, msg = notify.send_test_email(db, to=payload.to or None)
+    return {"ok": ok, "message": msg}
 
 
 class WhatsAppTestSendIn(BaseModel):

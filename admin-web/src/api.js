@@ -46,6 +46,7 @@ export const api = {
   getConfig: () => request("GET", "/admin/config"),
   saveConfig: (group, values) => request("PUT", `/admin/config/${group}`, { values }),
   testConfig: (group) => request("POST", `/admin/config/test/${group}`),
+  testSmtpSend: (to = "") => request("POST", "/admin/smtp/test-send", { to }),
 
   getWhatsappStatus: () => request("GET", "/admin/whatsapp/status"),
   autoConfigureWhatsapp: () => request("POST", "/admin/whatsapp/auto-configure"),

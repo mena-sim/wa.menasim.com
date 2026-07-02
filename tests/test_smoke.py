@@ -365,3 +365,75 @@ def test_telnyx_resolve_id_formats():
     assert looks_like_waba_id("1339285631627922")
     assert is_uuid("4e3162a5-13f6-4d12-b246-81705767a0b3")
     assert not looks_like_waba_id("4e3162a5-13f6-4d12-b246-81705767a0b3")
+
+
+def test_smtp_connection_test(db, monkeypatch):
+    from app.services import notify, runtime_config
+
+    runtime_config.set_value(db, "smtp_host", "smtp.example.com")
+    runtime_config.set_value(db, "smtp_port", "587")
+    runtime_config.set_value(db, "smtp_user", "user@example.com")
+    db.commit()
+
+    class FakeSMTP:
+        def __init__(self, host, port, timeout=20):
+            self.host = host
+            self.port = port
+
+        def ehlo(self):
+            return None
+
+        def starttls(self):
+            return None
+
+        def login(self, user, password):
+            return None
+
+        def noop(self):
+            return (250, b"OK")
+
+        def quit(self):
+            return None
+
+    monkeypatch.setattr("app.services.notify.smtplib.SMTP", FakeSMTP)
+    ok, msg = notify.test_smtp_connection(db)
+    assert ok is True
+    assert "smtp.example.com" in msg
+
+
+def test_smtp_send_test_email(db, monkeypatch):
+    from app.services import notify, runtime_config
+
+    runtime_config.set_value(db, "smtp_host", "smtp.example.com")
+    runtime_config.set_value(db, "smtp_port", "587")
+    runtime_config.set_value(db, "alert_email_to", "alerts@menasim.com")
+    db.commit()
+
+    sent = {}
+
+    class FakeSMTP:
+        def __init__(self, host, port, timeout=20):
+            pass
+
+        def ehlo(self):
+            return None
+
+        def starttls(self):
+            return None
+
+        def login(self, user, password):
+            return None
+
+        def send_message(self, msg):
+            sent["to"] = msg["To"]
+            sent["subject"] = msg["Subject"]
+
+        def quit(self):
+            return None
+
+    monkeypatch.setattr("app.services.notify.smtplib.SMTP", FakeSMTP)
+    ok, msg = notify.send_test_email(db)
+    assert ok is True
+    assert sent["to"] == "alerts@menasim.com"
+    assert "SMTP test" in sent["subject"]
+

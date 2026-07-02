@@ -60,6 +60,7 @@ export default function Settings({ toast }) {
   const [waStatus, setWaStatus] = useState(null);
   const [testPhone, setTestPhone] = useState("");
   const [waBusy, setWaBusy] = useState("");
+  const [smtpBusy, setSmtpBusy] = useState("");
 
   async function load() {
     try {
@@ -122,7 +123,28 @@ export default function Settings({ toast }) {
     }
   }
 
-  async function autoConfigureWhatsapp() {
+  async function runSmtpTest(kind) {
+    if (kind === "connect") {
+      await test("smtp");
+      return;
+    }
+    setSmtpBusy(kind);
+    try {
+      const res = await api.testSmtpSend();
+      toast(res.message, !res.ok);
+      if (res.ok) {
+        setConn((c) => ({
+          ...c,
+          smtp: { status: "ok", msg: res.message },
+        }));
+      }
+    } catch (e) {
+      toast(e.message, true);
+    } finally {
+      setSmtpBusy("");
+    }
+  }
+
     setWaBusy("auto");
     try {
       const res = await api.autoConfigureWhatsapp();
@@ -506,10 +528,21 @@ export default function Settings({ toast }) {
                 </Field>
               </div>
               <div className="field-actions">
-                <div />
+                <button className="btn secondary" onClick={() => runSmtpTest("connect")}>Test connection</button>
+                <button
+                  className="btn secondary"
+                  disabled={smtpBusy === "send"}
+                  onClick={() => runSmtpTest("send")}
+                >
+                  {smtpBusy === "send" ? "Sending…" : "Send test email"}
+                </button>
+                <ConnStatus state={conn.smtp || {}} />
                 <button className="btn primary" disabled={saving === "smtp"} onClick={() => save("smtp")}>
                   {saving === "smtp" ? "Saving…" : "Save changes"}
                 </button>
+              </div>
+              <div className="hint" style={{ marginTop: 8 }}>
+                Save settings first, then test. The test email goes to the alert recipient above.
               </div>
             </div>
           )}
