@@ -54,6 +54,42 @@ def normalize_user_text(text: str) -> str:
     return t
 
 
+def wants_support_contact(text: str) -> bool:
+    """Customer explicitly asks to email/call support or be contacted by a human."""
+    t = normalize_user_text(text).casefold()
+    if not t:
+        return False
+    needles = (
+        "send email",
+        "email support",
+        "email to support",
+        "contact me",
+        "call me",
+        "call back",
+        "human agent",
+        "real person",
+        "speak to someone",
+        "talk to someone",
+        "talk to support",
+        "contact support",
+        "reach support",
+        "need support",
+        "support team",
+        "ارسل ايميل",
+        "أرسل ايميل",
+        "ارسل بريد",
+        "أرسل بريد",
+        "تواصل معي",
+        "اتصل بي",
+        "اتصلوا",
+        "موظف",
+        "دعم فني",
+        "الدعم",
+        "بشري",
+    )
+    return any(n in t for n in needles)
+
+
 def customer_stated_need(text: str) -> bool:
     """True when the customer already said what they want (not just hi/hello)."""
     t = normalize_user_text(text).casefold()
@@ -194,6 +230,7 @@ def handle_message(
     text: str,
     media_url: str | None = None,
     is_image: bool = False,
+    was_audio_attempt: bool = False,
 ) -> AgentResult:
     convo = get_or_create_conversation(db, channel, sender_id)
 
@@ -233,6 +270,31 @@ def handle_message(
     )
     db.commit()
 
+    if wants_support_contact(user_content):
+        from app.agent.tools import escalate as escalate_tool
+
+        contact = sender_id if channel == "whatsapp" else None
+        esc = escalate_tool.run(
+            ToolContext(db=db, conversation=convo, language=language),
+            reason="Customer asked to contact support",
+            summary=user_content,
+            contact=contact,
+        )
+        reply = (
+            "تم إرسال طلبك إلى فريق الدعم وسيتواصلون معك قريبًا على واتساب."
+            if language == "ar"
+            else "I've emailed our support team with your request. They'll contact you on WhatsApp soon."
+        )
+        db.add(Message(conversation_id=convo.id, role="assistant", content=reply))
+        db.commit()
+        return AgentResult(
+            reply=reply,
+            conversation_id=convo.id,
+            language=language,
+            escalated=esc.get("escalated", True),
+            needs_human=True,
+        )
+
     # First message with no stated problem → welcome only. Do not ask device type yet.
     if is_first_user_message and not customer_stated_need(user_content) and not is_image:
         reply = welcome_message(language)
@@ -241,11 +303,18 @@ def handle_message(
         return AgentResult(reply=reply, conversation_id=convo.id, language=language)
 
     if not user_content.strip() and not is_image and not media_url:
-        reply = (
-            "🎙️ ما وصلتني رسالتك. جرّب تكتب سؤالك أو أعد إرسال الرسالة الصوتية."
-            if language == "ar"
-            else "🎙️ I didn't receive your message. Please type your question or resend the voice note."
-        )
+        if was_audio_attempt:
+            reply = (
+                "🎙️ ما قدرت أقرأ الرسالة الصوتية. جرّب ترسلها مرة ثانية أو اكتب سؤالك نصيًا."
+                if language == "ar"
+                else "🎙️ I couldn't read that voice note. Please try again or type your question."
+            )
+        else:
+            reply = (
+                "ما وصلتني رسالتك. اكتب سؤالك من فضلك."
+                if language == "ar"
+                else "I didn't receive your message. Please type your question."
+            )
         db.add(Message(conversation_id=convo.id, role="assistant", content=reply))
         db.commit()
         return AgentResult(reply=reply, conversation_id=convo.id, language=language)

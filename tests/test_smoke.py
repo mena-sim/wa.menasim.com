@@ -670,3 +670,98 @@ def test_smtp_send_test_email(db, monkeypatch):
     assert b"Subject:" in sent["message"]
     assert b"menasim_support" in sent["message"] or b"SMTP" in sent["message"]
 
+
+def test_repair_inbound_recovers_text_from_raw_blob():
+    from app.services.channels.base import InboundMessage
+    from app.services.channels.whatsapp_telnyx_channel import repair_inbound
+
+    raw = (
+        "{'foreign_id': 'wamid.test', 'from': '+447954823445', "
+        "'text': {'body': 'send email'}}"
+    )
+    inbound = InboundMessage(
+        channel="whatsapp",
+        sender_id="+447954823445",
+        text="",
+        parse_debug={"raw_text": raw},
+    )
+    fixed = repair_inbound(inbound)
+    assert fixed.text == "send email"
+    assert fixed.is_audio is False
+
+
+def test_repair_inbound_recovers_audio_from_raw_blob():
+    from app.services.channels.base import InboundMessage
+    from app.services.channels.whatsapp_telnyx_channel import repair_inbound
+
+    audio_url = "https://rcs-outbound.us-central-1.telnyxcloudstorage.com/voice.ogg"
+    raw = (
+        "{'audio': {'id': '1', 'mime_type': 'audio/ogg', "
+        f"'url': '{audio_url}'}}}}"
+    )
+    inbound = InboundMessage(
+        channel="whatsapp",
+        sender_id="+447954823445",
+        text="",
+        parse_debug={"raw_text": raw},
+    )
+    fixed = repair_inbound(inbound)
+    assert fixed.is_audio is True
+    assert fixed.media_url == audio_url
+
+
+def test_wants_support_contact_detects_email_request():
+    from app.agent.engine import wants_support_contact
+
+    assert wants_support_contact("can you send email to support to contact me") is True
+    assert wants_support_contact("send email") is True
+    assert wants_support_contact("hello") is False
+
+
+def test_support_contact_escalates_and_replies(db, monkeypatch):
+    from app.agent import engine
+    from app.models.ticket import Ticket
+    from sqlalchemy import select
+
+    emails: list[dict] = []
+
+    def _fake_email(db, subject, body):
+        emails.append({"subject": subject, "body": body})
+        return True, "sent"
+
+    monkeypatch.setattr("app.agent.tools.escalate.send_escalation_email", _fake_email)
+
+    result = engine.handle_message(
+        db,
+        channel="whatsapp",
+        sender_id="+447954823445",
+        text="can you send email to support to contact me",
+    )
+    assert result.escalated is True
+    assert "support" in result.reply.lower()
+    assert emails
+    ticket = db.execute(
+        select(Ticket).where(Ticket.conversation_id == result.conversation_id)
+    ).scalar_one()
+    assert ticket.contact == "+447954823445"
+
+
+def test_empty_text_reply_not_voice_specific(db):
+    from app.agent import engine
+    from app.models.message import Message
+
+    convo = engine.get_or_create_conversation(db, "whatsapp", "+447700900010")
+    db.add(Message(conversation_id=convo.id, role="user", content="hi"))
+    db.add(Message(conversation_id=convo.id, role="assistant", content="Hi! How can I help you?"))
+    db.commit()
+
+    result = engine.handle_message(
+        db,
+        channel="whatsapp",
+        sender_id="+447700900010",
+        text="   ",
+        was_audio_attempt=False,
+    )
+    assert "voice note" not in result.reply.lower()
+    assert "🎙️" not in result.reply
+

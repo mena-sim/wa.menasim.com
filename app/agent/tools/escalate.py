@@ -11,9 +11,10 @@ SCHEMA = {
     "function": {
         "name": "escalate",
         "description": (
-            "Escalate the conversation to a human support agent. Use when you cannot "
-            "resolve the issue, the customer is upset, the request is out of scope, or "
-            "the customer sent an image/screenshot you cannot interpret."
+            "Escalate the conversation to a human support agent and email the support team. "
+            "Use when you cannot resolve the issue, the customer is upset, the request is out "
+            "of scope, the customer asks to be contacted or emailed by support, or you cannot "
+            "interpret a screenshot."
         ),
         "parameters": {
             "type": "object",

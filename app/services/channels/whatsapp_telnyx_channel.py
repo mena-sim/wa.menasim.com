@@ -37,6 +37,16 @@ _BODY_IN_TEXT_RE = re.compile(
     r"""['"]body['"]\s*:\s*['"]((?:\\.|[^'\\])*)['"]""",
     re.IGNORECASE,
 )
+# Nested Meta shape: 'text': {'body': 'hello'}
+_NESTED_BODY_RE = re.compile(
+    r"""['"]text['"]\s*:\s*\{[^}]*['"]body['"]\s*:\s*['"]([^'"]*)['"]""",
+    re.IGNORECASE | re.DOTALL,
+)
+# Truncated dicts (no closing quote)
+_BODY_TRUNC_RE = re.compile(
+    r"""['"]body['"]\s*:\s*['"]([^'"]{1,2000})""",
+    re.IGNORECASE,
+)
 
 
 def _phone_from_field(value: Any) -> str:
@@ -114,10 +124,34 @@ def _extract_text_body_from_blob(text: str) -> str:
         body = _extract_text({"text": ""}, parsed)
         if body:
             return body
-    m = _BODY_IN_TEXT_RE.search(text or "")
-    if m:
-        return m.group(1).encode("utf-8").decode("unicode_escape")
+    for pattern in (_NESTED_BODY_RE, _BODY_IN_TEXT_RE, _BODY_TRUNC_RE):
+        m = pattern.search(text or "")
+        if m:
+            return m.group(1).strip()
     return ""
+
+
+def _raw_text_looks_like_audio(raw: str) -> bool:
+    return bool(re.search(r"""['"]audio['"]\s*:""", raw or ""))
+
+
+def repair_inbound(inbound: InboundMessage) -> InboundMessage:
+    """Recover text/voice from Telnyx dict blobs stored in parse_debug.raw_text."""
+    raw = (inbound.parse_debug or {}).get("raw_text") or ""
+    if not raw:
+        return inbound
+    if not (inbound.text or "").strip():
+        body = _extract_text_body_from_blob(raw)
+        if body:
+            inbound.text = body
+    if not inbound.media_url and _raw_text_looks_like_audio(raw):
+        blob_url, blob_ct, _fn, blob_type = _extract_from_text_blob(raw)
+        if blob_url and blob_type == "audio":
+            inbound.media_url = blob_url
+            inbound.media_content_type = blob_ct or "audio/ogg"
+            inbound.is_audio = True
+            inbound.is_image = False
+    return inbound
 
 
 def _find_media_in_obj(obj: Any, found: list[dict[str, str]] | None = None) -> list[dict[str, str]]:
@@ -401,6 +435,8 @@ def parse_inbound(body: dict[str, Any]) -> InboundMessage | None:
     )
 
     parse_debug = payload_debug_summary(payload)
+    if raw_text is not None:
+        parse_debug["raw_text"] = str(raw_text)[:4000]
     if parse_notes:
         parse_debug["parse_notes"] = parse_notes
     if (
@@ -446,6 +482,7 @@ def process_inbound(db: Session, inbound: InboundMessage) -> dict[str, Any]:
     if inbound.parse_debug:
         parse_log["payload_debug"] = inbound.parse_debug
 
+    inbound = repair_inbound(inbound)
     prepared, media_log = inbound_media.prepare_inbound_media(db, inbound)
     media_log = {"parse": parse_log, **media_log}
 
@@ -459,24 +496,29 @@ def process_inbound(db: Session, inbound: InboundMessage) -> dict[str, Any]:
         }
     inbound = prepared
 
-    if not (inbound.text or "").strip() and not inbound.media_url:
-        lang = "ar" if (convo.language or "") == "ar" else "en"
-        if any("\u0600" <= ch <= "\u06ff" for ch in (convo.language or "")):
-            lang = "ar"
-        reply = (
-            "🎙️ ما وصلتني الرسالة الصوتية. جرّب ترسلها مرة ثانية أو اكتب سؤالك نصيًا."
-            if lang == "ar"
-            else "🎙️ I didn't receive your voice note. Please try again or type your question."
-        )
-        media_log["action"] = "empty_inbound_rejected"
-        send_whatsapp(db, inbound.sender_id, reply)
-        return {
-            "replied": True,
-            "empty_inbound": True,
-            "escalated": False,
-            "media_log": media_log,
-        }
+    # If voice still not handled, retry once after repair (e.g. URL extracted from raw_text).
+    if inbound.is_audio and inbound.media_url and media_log.get("action") == "none":
+        inbound = repair_inbound(inbound)
+        prepared2, media_log2 = inbound_media.prepare_inbound_media(db, inbound)
+        media_log["retry"] = media_log2
+        if isinstance(prepared2, str):
+            send_whatsapp(db, inbound.sender_id, prepared2)
+            return {
+                "replied": True,
+                "media_rejected": True,
+                "escalated": False,
+                "media_log": media_log,
+            }
+        inbound = prepared2
 
+    was_audio = bool(
+        inbound.parse_debug
+        and (
+            inbound.parse_debug.get("parse_error") == "audio_dict_in_text_but_no_url_extracted"
+            or "media_from_text_blob" in (inbound.parse_debug.get("parse_notes") or [])
+            or re.search(r"""['"]audio['"]\s*:""", inbound.parse_debug.get("raw_text") or "")
+        )
+    )
     result = handle_message(
         db,
         channel=inbound.channel,
@@ -484,6 +526,7 @@ def process_inbound(db: Session, inbound: InboundMessage) -> dict[str, Any]:
         text=inbound.text,
         media_url=inbound.media_url,
         is_image=inbound.is_image,
+        was_audio_attempt=was_audio or media_log.get("action", "").startswith("transcribe"),
     )
     if result.suppressed or not (result.reply or "").strip():
         return {
