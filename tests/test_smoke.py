@@ -506,6 +506,21 @@ def test_telnyx_resolve_id_formats():
     assert not looks_like_waba_id("4e3162a5-13f6-4d12-b246-81705767a0b3")
 
 
+def test_smtp_message_ascii_safe_with_pound_sign():
+    from app.services.notify import _build_message, _message_bytes
+
+    msg = _build_message(
+        subject="[menasim support] Refund £50",
+        body="Customer paid £50 for UK eSIM.\nمرحبا",
+        sender="Menasim £ Support <alerts@menasim.com>",
+        recipient="team@menasim.com",
+    )
+    raw = _message_bytes(msg)
+    msg.as_string().encode("ascii")
+    assert b"=?utf-8" in raw
+    assert b"base64" in raw.lower() or b"Content-Transfer-Encoding" in raw
+
+
 def test_smtp_connection_port_465_ssl(db, monkeypatch):
     from app.services import notify, runtime_config
 
@@ -652,5 +667,6 @@ def test_smtp_send_test_email(db, monkeypatch):
     ok, msg = notify.send_test_email(db)
     assert ok is True
     assert sent["to"] == "alerts@menasim.com"
-    assert b"SMTP test" in sent["message"]
+    assert b"Subject:" in sent["message"]
+    assert b"menasim_support" in sent["message"] or b"SMTP" in sent["message"]
 

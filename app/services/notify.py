@@ -1,11 +1,11 @@
 from __future__ import annotations
 
+import re
 import smtplib
 import ssl
 from contextlib import contextmanager
 from email.header import Header
-from email.message import EmailMessage
-from email.policy import SMTP
+from email.mime.text import MIMEText
 from email.utils import formataddr, parseaddr
 from typing import Any, Iterator
 
@@ -16,14 +16,17 @@ from app.services import runtime_config
 
 logger = get_logger(__name__)
 
+_EMAIL_ONLY_RE = re.compile(r"([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})")
 
-def _encode_header(value: str) -> str:
-    value = (value or "").strip()
-    if not value:
-        return ""
-    if value.isascii():
-        return value
-    return str(Header(value, "utf-8"))
+
+def _email_only(value: str) -> str:
+    """SMTP envelope addresses must be plain ASCII emails."""
+    text = (value or "").strip()
+    match = _EMAIL_ONLY_RE.search(text)
+    if match:
+        return match.group(1)
+    _, addr = parseaddr(text)
+    return (addr or text).strip()
 
 
 def _encode_address(value: str) -> str:
@@ -31,26 +34,38 @@ def _encode_address(value: str) -> str:
     value = (value or "").strip()
     if not value:
         return ""
-    if value.isascii():
-        return value
     name, addr = parseaddr(value)
-    if name and not name.isascii():
-        return formataddr((str(Header(name, "utf-8")), addr))
-    return value
+    if not addr:
+        addr = _email_only(value) or value
+    if name:
+        try:
+            name.encode("ascii")
+            return formataddr((name, addr))
+        except UnicodeEncodeError:
+            return formataddr((str(Header(name, "utf-8")), addr))
+    return addr
 
 
-def _address_only(value: str) -> str:
-    _, addr = parseaddr(value or "")
-    return addr or (value or "").strip()
-
-
-def _build_message(*, subject: str, body: str, sender: str, recipient: str) -> EmailMessage:
-    msg = EmailMessage(policy=SMTP)
-    msg["Subject"] = _encode_header(subject)
+def _build_message(*, subject: str, body: str, sender: str, recipient: str) -> MIMEText:
+    """Build a UTF-8 email; headers use RFC 2047, body uses base64 CTE when needed."""
+    msg = MIMEText(body or "", "plain", "utf-8")
+    msg["Subject"] = Header(subject or "", "utf-8")
     msg["From"] = _encode_address(sender)
     msg["To"] = _encode_address(recipient)
-    msg.set_content(body or "", subtype="plain", charset="utf-8")
     return msg
+
+
+def _message_bytes(msg: MIMEText) -> bytes:
+    """Serialize for SMTP; verify header lines are ASCII-safe on the wire."""
+    raw = msg.as_bytes()
+    for line in raw.split(b"\r\n"):
+        if not line:
+            break
+        if line.startswith(
+            (b"Subject:", b"From:", b"To:", b"Cc:", b"Bcc:", b"Content-Type:", b"MIME-Version:")
+        ):
+            line.decode("ascii")
+    return raw
 
 
 def _smtp_settings(db: Session) -> dict[str, Any]:
@@ -143,22 +158,22 @@ def send_email(
         sender=settings["sender"],
         recipient=recipient,
     )
+    payload = _message_bytes(msg)
+    from_addr = _email_only(settings["sender"])
+    to_addr = _email_only(recipient)
 
     try:
         with smtp_connection(db) as server:
-            from_addr = _address_only(settings["sender"])
-            to_addr = _address_only(recipient)
-            server.sendmail(from_addr, [to_addr], msg.as_bytes())
-        logger.info("[notify] email sent to %s subject=%s", recipient, subject)
+            server.sendmail(from_addr, [to_addr], payload)
+        logger.info("[notify] email sent to %s", to_addr)
         return True, f"Email sent to {recipient}."
     except Exception as exc:
-        logger.warning("[notify] failed to send email: %s", exc)
+        logger.warning("[notify] failed to send email to %s: %s", to_addr, exc)
         return False, str(exc)
 
 
 def send_test_email(db: Session, to: str | None = None) -> tuple[bool, str]:
     """Send a test email to confirm SMTP delivery."""
-    recipient = (to or runtime_config.get(db, "alert_email_to") or "").strip()
     body = (
         "This is a test email from menasim WA support.\n\n"
         "If you received this, SMTP escalation alerts are configured correctly."
@@ -167,14 +182,14 @@ def send_test_email(db: Session, to: str | None = None) -> tuple[bool, str]:
         db,
         subject="[menasim support] SMTP test",
         body=body,
-        to=recipient,
+        to=to,
     )
 
 
 def send_escalation_email(db: Session, subject: str, body: str) -> bool:
     """Send an escalation alert via SMTP. No-op (logs only) if SMTP not configured."""
     if not runtime_config.smtp_enabled(db):
-        logger.info("[notify] SMTP not configured; escalation alert not emailed. subject=%s", subject)
+        logger.info("[notify] SMTP not configured; escalation alert not emailed")
         return False
 
     ok, _msg = send_email(
