@@ -9,7 +9,7 @@ from app.agent.engine import handle_message
 from app.core.logging import get_logger
 from app.services import runtime_config, transcription
 from app.services.channels.base import InboundMessage
-from app.services.telnyx_client import send_whatsapp
+from app.services.telnyx_client import normalize_e164, send_whatsapp
 
 logger = get_logger(__name__)
 
@@ -19,10 +19,25 @@ WHATSAPP_CHANNEL = "whatsapp"
 def _phone_from_field(value: Any) -> str:
     """Telnyx SMS webhooks use {\"phone_number\": \"+1...\"}; WhatsApp may use a plain string."""
     if isinstance(value, str):
-        return value.strip()
+        raw = value.strip()
+        if raw.lower().startswith("whatsapp:"):
+            raw = raw.split(":", 1)[1].strip()
+        return normalize_e164(raw)
     if isinstance(value, dict):
-        return str(value.get("phone_number") or "").strip()
+        for key in ("phone_number", "number", "msisdn", "id"):
+            candidate = str(value.get(key) or "").strip()
+            if candidate:
+                return normalize_e164(candidate)
     return ""
+
+
+def _extract_text(payload: dict[str, Any]) -> str:
+    text = payload.get("text") or payload.get("body") or ""
+    if not text and isinstance(payload.get("whatsapp_message"), dict):
+        wm = payload["whatsapp_message"]
+        if wm.get("type") == "text" and isinstance(wm.get("text"), dict):
+            text = wm["text"].get("body") or ""
+    return str(text or "").strip()
 
 
 def parse_inbound(body: dict[str, Any]) -> InboundMessage | None:
@@ -36,11 +51,15 @@ def parse_inbound(body: dict[str, Any]) -> InboundMessage | None:
         return None
 
     payload = data.get("payload") or {}
+    direction = str(payload.get("direction") or "").lower()
+    if direction and direction not in ("inbound", "incoming"):
+        return None
+
     sender = _phone_from_field(payload.get("from"))
     if not sender:
         return None
 
-    text = str(payload.get("text") or "").strip()
+    text = _extract_text(payload)
     media = payload.get("media") or []
     media_url = None
     content_type = ""
@@ -91,6 +110,14 @@ def _transcribe_media(db: Session, url: str, content_type: str | None) -> str | 
 
 def process_inbound(db: Session, inbound: InboundMessage) -> dict[str, Any]:
     """Run the agent on an inbound WhatsApp message and send the reply back."""
+    # WhatsApp is fully agent-driven; a new customer message re-enables the AI.
+    from app.agent.engine import get_or_create_conversation
+
+    convo = get_or_create_conversation(db, WHATSAPP_CHANNEL, inbound.sender_id)
+    if convo.handed_over:
+        convo.handed_over = False
+        db.commit()
+
     # Voice notes: transcribe to text (auto language) before the agent sees them.
     if inbound.is_audio and inbound.media_url:
         transcript = _transcribe_media(db, inbound.media_url, inbound.media_content_type)
@@ -120,6 +147,13 @@ def process_inbound(db: Session, inbound: InboundMessage) -> dict[str, Any]:
     if result.suppressed or not (result.reply or "").strip():
         return {"replied": False, "suppressed": result.suppressed, "escalated": result.escalated}
     send_result = send_whatsapp(db, inbound.sender_id, result.reply, media_url=result.media_url)
+    if not send_result.get("ok"):
+        logger.warning(
+            "whatsapp reply delivery failed to=%s status=%s detail=%s",
+            inbound.sender_id,
+            send_result.get("status"),
+            (send_result.get("detail") or send_result.get("error") or "")[:300],
+        )
     return {
         "replied": True,
         "escalated": result.escalated,

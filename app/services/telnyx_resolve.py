@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from typing import Any
+from urllib.parse import quote
 
 import httpx
 
@@ -88,3 +88,39 @@ def effective_profile_id(
     if configured and is_uuid(configured):
         return configured, warnings
     return None, warnings
+
+
+def ensure_profile_webhook(
+    client: httpx.Client, api_key: str, profile_id: str, webhook_url: str
+) -> tuple[bool, str]:
+    """Set messaging profile webhook URL via Telnyx API."""
+    try:
+        resp = client.patch(
+            f"https://api.telnyx.com/v2/messaging_profiles/{profile_id}",
+            json={"webhook_url": webhook_url, "webhook_api_version": "2"},
+            headers=_headers(api_key),
+        )
+        if resp.status_code < 300:
+            return True, f"Webhook URL set on profile {profile_id}"
+        return False, f"Failed to set webhook (HTTP {resp.status_code}): {resp.text[:200]}"
+    except httpx.HTTPError as exc:
+        return False, f"Webhook update error: {exc}"
+
+
+def assign_number_to_profile(
+    client: httpx.Client, api_key: str, phone: str, profile_id: str
+) -> tuple[bool, str]:
+    phone = normalize_e164(phone)
+    if not phone or not profile_id:
+        return False, "Missing phone or profile id"
+    try:
+        resp = client.patch(
+            f"https://api.telnyx.com/v2/phone_numbers/{quote(phone, safe='')}/messaging",
+            json={"messaging_profile_id": profile_id},
+            headers=_headers(api_key),
+        )
+        if resp.status_code < 300:
+            return True, f"Assigned {phone} to profile {profile_id}"
+        return False, f"Number assign failed (HTTP {resp.status_code}): {resp.text[:200]}"
+    except httpx.HTTPError as exc:
+        return False, f"Number assign error: {exc}"

@@ -11,7 +11,7 @@ from app.core.config import get_settings
 from app.core.logging import get_logger
 from app.models.conversation import Conversation
 from app.models.processed_event import ProcessedEvent
-from app.services import runtime_config
+from app.services import runtime_config, webhook_log
 from app.services.telnyx_resolve import (
     effective_profile_id,
     is_uuid,
@@ -156,25 +156,55 @@ def discover(db: Session) -> dict[str, Any]:
 
 
 def auto_configure(db: Session) -> dict[str, Any]:
-    """Pull the correct messaging profile + WABA ID from Telnyx for the configured sender."""
+    """Pull the correct messaging profile + WABA ID from Telnyx and wire up webhooks."""
     info = discover(db)
     changed: list[str] = []
+    actions: list[str] = []
+    api_key = runtime_config.get(db, "telnyx_api_key")
+    from_number = normalize_e164(runtime_config.get(db, "telnyx_whatsapp_from"))
+    target_webhook = webhook_url()
+    profile_id = info.get("suggested_profile_id") or (
+        runtime_config.get(db, "telnyx_messaging_profile_id") or ""
+    ).strip()
+
     if info.get("suggested_waba_id"):
         runtime_config.set_value(db, "whatsapp_business_id", str(info["suggested_waba_id"]))
         changed.append("whatsapp_business_id")
     if info.get("suggested_profile_id"):
         runtime_config.set_value(db, "telnyx_messaging_profile_id", str(info["suggested_profile_id"]))
         changed.append("telnyx_messaging_profile_id")
+        profile_id = str(info["suggested_profile_id"])
+
+    if api_key and profile_id and is_uuid(profile_id):
+        try:
+            with httpx.Client(timeout=20.0) as client:
+                from app.services.telnyx_resolve import assign_number_to_profile, ensure_profile_webhook
+
+                ok, msg = ensure_profile_webhook(client, api_key, profile_id, target_webhook)
+                actions.append(msg)
+                if from_number:
+                    ok2, msg2 = assign_number_to_profile(client, api_key, from_number, profile_id)
+                    actions.append(msg2)
+                    if ok2:
+                        changed.append("number_assigned")
+                if ok:
+                    changed.append("webhook_url")
+        except httpx.HTTPError as exc:
+            actions.append(f"Telnyx setup error: {exc}")
+
     if changed:
         db.commit()
+
+    ok = bool(info.get("suggested_profile_id") or "webhook_url" in changed)
     return {
-        "ok": bool(changed),
+        "ok": ok,
         "message": (
-            "Updated Telnyx IDs from your account."
-            if changed
+            "Telnyx WhatsApp configured (IDs + webhook URL)."
+            if ok
             else "Could not auto-detect IDs. Check sender number and Telnyx API key."
         ),
         "changed": changed,
+        "actions": actions,
         "discover": info,
     }
 
@@ -211,6 +241,7 @@ def status(db: Session) -> dict[str, Any]:
         "warnings": discovered.get("warnings") or [],
         "whatsapp_numbers": discovered.get("whatsapp_numbers") or [],
         "messaging_profiles": discovered.get("messaging_profiles") or [],
+        "recent_webhooks": webhook_log.recent(db, limit=15),
     }
 
 

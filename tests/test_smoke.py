@@ -120,6 +120,38 @@ def test_whatsapp_payload_uses_telnyx_schema():
     }
 
 
+def test_parse_inbound_ignores_outbound_direction():
+    body = {
+        "data": {
+            "event_type": "message.received",
+            "payload": {
+                "id": "x1",
+                "direction": "outbound",
+                "from": "+447822002099",
+                "text": "should ignore",
+            },
+        }
+    }
+    assert parse_inbound(body) is None
+
+
+def test_parse_inbound_normalizes_whatsapp_prefix():
+    body = {
+        "data": {
+            "event_type": "message.received",
+            "payload": {
+                "id": "x2",
+                "direction": "inbound",
+                "from": "whatsapp:+447700900999",
+                "text": "hi",
+            },
+        }
+    }
+    inbound = parse_inbound(body)
+    assert inbound is not None
+    assert inbound.sender_id == "+447700900999"
+
+
 def test_whatsapp_inbound_agent_pipeline(db):
     from app.services import telnyx_diagnostics
 

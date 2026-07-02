@@ -102,36 +102,44 @@ def send_whatsapp(
         "whatsapp_message": _whatsapp_payload(text, media_url=media_url),
     }
 
-    # Only attach a validated messaging profile — a wrong ID (e.g. WABA ID) breaks sends.
+    profile_id: str | None = None
     try:
         with httpx.Client(timeout=15.0) as client:
             from app.services.telnyx_resolve import effective_profile_id
 
-            resolved, _warnings = effective_profile_id(
+            profile_id, _warnings = effective_profile_id(
                 client,
                 api_key,
                 configured_profile=runtime_config.get(db, "telnyx_messaging_profile_id"),
                 from_number=wa_from,
             )
-            if resolved:
-                payload["messaging_profile_id"] = resolved
+            if profile_id:
+                payload["messaging_profile_id"] = profile_id
     except httpx.HTTPError:
         pass
 
-    try:
+    def _post(current: dict[str, Any]) -> httpx.Response:
         with httpx.Client(timeout=30.0) as client:
-            resp = client.post(
-                TELNYX_WHATSAPP_MESSAGES_URL, json=payload, headers=_headers(api_key)
+            return client.post(
+                TELNYX_WHATSAPP_MESSAGES_URL, json=current, headers=_headers(api_key)
             )
-            ok = resp.status_code < 300
-            detail = ""
-            try:
-                detail = resp.text[:500]
-            except Exception:  # pragma: no cover
-                pass
-            if not ok:
-                logger.warning("[telnyx] send failed %s: %s", resp.status_code, detail)
-            return {"ok": ok, "status": resp.status_code, "detail": detail}
+
+    try:
+        resp = _post(payload)
+        ok = resp.status_code < 300
+        detail = resp.text[:500] if not ok else ""
+        if not ok and profile_id:
+            retry = {k: v for k, v in payload.items() if k != "messaging_profile_id"}
+            logger.info("[telnyx] retrying send without messaging_profile_id")
+            resp2 = _post(retry)
+            if resp2.status_code < 300:
+                return {"ok": True, "status": resp2.status_code, "retried_without_profile": True}
+            detail = resp2.text[:500]
+            resp = resp2
+            ok = False
+        if not ok:
+            logger.warning("[telnyx] send failed %s: %s", resp.status_code, detail)
+        return {"ok": ok, "status": resp.status_code, "detail": detail}
     except httpx.HTTPError as exc:
         logger.warning("[telnyx] send error: %s", exc)
         return {"ok": False, "error": str(exc)}

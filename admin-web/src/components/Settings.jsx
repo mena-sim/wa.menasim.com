@@ -320,6 +320,25 @@ export default function Settings({ toast }) {
                   {(waStatus.warnings || []).map((w) => (
                     <div key={w} style={{ color: "var(--warn, #b45309)", marginTop: 6 }}>⚠ {w}</div>
                   ))}
+                  {waStatus.webhook_public_key_set && (
+                    <div style={{ marginTop: 6 }}>
+                      Webhook signature verification is ON — if inbound messages never arrive, clear the
+                      webhook public key or paste the correct key from Telnyx → Messaging → Security.
+                    </div>
+                  )}
+                  {(waStatus.recent_webhooks || []).length > 0 && (
+                    <div style={{ marginTop: 10 }}>
+                      <strong>Recent Telnyx webhooks</strong>
+                      <ul style={{ margin: "6px 0 0", paddingLeft: 18, fontSize: "0.9em" }}>
+                        {waStatus.recent_webhooks.map((w) => (
+                          <li key={w.id}>
+                            {w.created_at?.slice(11, 19)} · {w.status} · {w.sender || w.event_type}
+                            {w.detail ? ` — ${w.detail.slice(0, 80)}` : ""}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
                 </div>
               )}
               <Field label="Test phone number" hint="Your mobile number to receive test messages and simulate inbound chats.">
