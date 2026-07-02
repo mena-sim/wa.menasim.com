@@ -42,6 +42,10 @@ SCHEMA: dict[str, tuple[str, bool, str | None, Any]] = {
     "agent_system_instructions": ("agent", False, None, ""),
     "agent_max_tool_iters": ("agent", False, "agent_max_tool_iters", "6"),
     "rate_limit_per_minute": ("agent", False, "rate_limit_per_minute", "20"),
+    # Voice notes (DeepInfra Whisper transcription)
+    "deepinfra_api_key": ("voice", True, "deepinfra_api_key", ""),
+    "deepinfra_whisper_model": ("voice", False, "deepinfra_whisper_model", "openai/whisper-large-v3"),
+    "voice_enabled": ("voice", False, None, "true"),
     # SMTP alerts
     "smtp_host": ("smtp", False, "smtp_host", ""),
     "smtp_port": ("smtp", False, "smtp_port", "587"),
@@ -166,3 +170,14 @@ def woocommerce_enabled(db: Session) -> bool:
 
 def smtp_enabled(db: Session) -> bool:
     return bool(get(db, "smtp_host") and get(db, "alert_email_to"))
+
+
+def transcription_config(db: Session) -> dict[str, Any]:
+    return {
+        "api_key": get(db, "deepinfra_api_key"),
+        "model": get(db, "deepinfra_whisper_model") or "openai/whisper-large-v3",
+    }
+
+
+def voice_enabled(db: Session) -> bool:
+    return bool(get(db, "deepinfra_api_key")) and get_bool(db, "voice_enabled")

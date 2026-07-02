@@ -24,7 +24,7 @@ logger = get_logger(__name__)
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
-CONFIG_GROUPS = ("deepseek", "telnyx", "whatsapp", "wordpress", "agent", "smtp")
+CONFIG_GROUPS = ("deepseek", "telnyx", "whatsapp", "wordpress", "agent", "voice", "smtp")
 
 
 # ---------------------------------------------------------------- auth
@@ -95,7 +95,26 @@ def test_config(
     if group == "wordpress":
         ok, msg = WooCommerceClient(db).test_connection()
         return {"ok": ok, "message": msg}
+    if group == "voice":
+        return _test_deepinfra(db)
     raise HTTPException(status_code=400, detail="No connection test for this group")
+
+
+def _test_deepinfra(db: Session) -> dict:
+    key = runtime_config.get(db, "deepinfra_api_key")
+    if not key:
+        return {"ok": False, "message": "DeepInfra API key is not set."}
+    try:
+        with httpx.Client(timeout=15.0) as client:
+            resp = client.get(
+                "https://api.deepinfra.com/v1/openai/models",
+                headers={"Authorization": f"Bearer {key}"},
+            )
+        if resp.status_code < 300:
+            return {"ok": True, "message": "DeepInfra API key is valid."}
+        return {"ok": False, "message": f"HTTP {resp.status_code}: check the API key."}
+    except httpx.HTTPError as exc:
+        return {"ok": False, "message": f"Connection error: {exc}"}
 
 
 def _test_deepseek(db: Session) -> dict:

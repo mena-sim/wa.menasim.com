@@ -102,6 +102,50 @@ body {
 .composer button:hover { background: var(--accent); }
 .composer button:disabled { opacity: 0.5; cursor: not-allowed; }
 #imgBtn { background: #374151; }
+[hidden] { display: none !important; }
+
+/* Round icon buttons (mic / send / cancel) */
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  color: #fff;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+.icon-btn.mic { background: var(--accent-2); }
+.icon-btn.mic:hover { background: var(--accent); }
+.icon-btn.send { background: var(--accent-2); }
+.icon-btn.send:hover { background: var(--accent); }
+.icon-btn.cancel { background: #374151; }
+.icon-btn.cancel:hover { background: #4b5563; }
+
+/* Recording bar (WhatsApp style) */
+.rec-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border-top: 1px solid #1f2937;
+  background: #0b1324;
+}
+.rec-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #ef4444;
+  box-shadow: 0 0 10px #ef4444;
+  animation: recpulse 1.2s infinite ease-in-out;
+  flex: 0 0 auto;
+}
+@keyframes recpulse { 0%,100% { opacity: 1; } 50% { opacity: 0.25; } }
+.rec-time { font-variant-numeric: tabular-nums; font-weight: 700; color: var(--text); min-width: 42px; }
+.rec-hint { flex: 1; color: var(--muted); font-size: 13px; }
 
 /* ---- Inbox ---- */
 .inbox-wrap { max-width: 1100px; margin: 24px auto; padding: 0 16px; }

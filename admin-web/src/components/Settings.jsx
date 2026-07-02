@@ -8,6 +8,7 @@ const TABS = [
   { key: "whatsapp", label: "WhatsApp", icon: "whatsapp" },
   { key: "wordpress", label: "WordPress API", icon: "wordpress" },
   { key: "agent", label: "Agent & KB", icon: "book" },
+  { key: "voice", label: "Voice notes", icon: "mic" },
   { key: "smtp", label: "Email Alerts", icon: "mail" },
 ];
 
@@ -275,6 +276,40 @@ export default function Settings({ toast }) {
 
           {tab === "agent" && (
             <AgentTab g={g} setField={setField} save={save} saving={saving} toast={toast} />
+          )}
+
+          {tab === "voice" && (
+            <div className="card">
+              <h3><Icon name="mic" /> Voice notes (DeepInfra Whisper)</h3>
+              <div className="desc">
+                Lets customers send voice notes. Audio is transcribed with Whisper (auto-detects
+                Arabic / English) and answered like a normal message. Install ffmpeg on the server.
+              </div>
+              <Field label="DeepInfra API key">
+                <input type="password" placeholder="di-..." value={g.voice.deepinfra_api_key}
+                  onChange={(e) => setField("voice", "deepinfra_api_key", e.target.value)} />
+              </Field>
+              <div className="row2col">
+                <Field label="Whisper model">
+                  <input value={g.voice.deepinfra_whisper_model}
+                    onChange={(e) => setField("voice", "deepinfra_whisper_model", e.target.value)} />
+                </Field>
+                <Field label="Voice notes enabled" hint="Turn the record button + transcription on/off.">
+                  <select value={g.voice.voice_enabled}
+                    onChange={(e) => setField("voice", "voice_enabled", e.target.value)}>
+                    <option value="true">Enabled</option>
+                    <option value="false">Disabled</option>
+                  </select>
+                </Field>
+              </div>
+              <div className="field-actions">
+                <button className="btn secondary" onClick={() => test("voice")}>Test connection</button>
+                <ConnStatus state={conn.voice || {}} />
+                <button className="btn primary" disabled={saving === "voice"} onClick={() => save("voice")}>
+                  {saving === "voice" ? "Saving…" : "Save changes"}
+                </button>
+              </div>
+            </div>
           )}
 
           {tab === "smtp" && (

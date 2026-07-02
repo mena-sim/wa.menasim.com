@@ -45,6 +45,10 @@ class Settings(BaseSettings):
     telnyx_messaging_profile_id: str = ""
     telnyx_webhook_public_key: str = ""
 
+    # Voice notes (DeepInfra Whisper transcription)
+    deepinfra_api_key: str = ""
+    deepinfra_whisper_model: str = "openai/whisper-large-v3"
+
     # SMTP escalation alerts
     smtp_host: str = ""
     smtp_port: int = 587

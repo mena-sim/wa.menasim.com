@@ -29,8 +29,23 @@
     <form id="composer" class="composer">
       <input id="input" type="text" placeholder="Type a message… / اكتب رسالتك…" autocomplete="off" />
       <button type="button" id="imgBtn" title="Simulate sending an image">IMG</button>
+      <button type="button" id="micBtn" class="icon-btn mic" title="Record a voice note" aria-label="Record voice note">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V22h2v-3.08A7 7 0 0 0 19 12h-2Z"/></svg>
+      </button>
       <button type="submit" id="sendBtn">Send</button>
     </form>
+
+    <div id="recBar" class="rec-bar" hidden>
+      <button type="button" id="recCancel" class="icon-btn cancel" title="Cancel" aria-label="Cancel recording">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M6 7h12l-1 14H7L6 7Zm3-4h6l1 2h4v2H2V5h4l1-2Z"/></svg>
+      </button>
+      <span class="rec-dot"></span>
+      <span id="recTime" class="rec-time">0:00</span>
+      <span class="rec-hint">Recording… slide to send · جارٍ التسجيل…</span>
+      <button type="button" id="recSend" class="icon-btn send" title="Send voice note" aria-label="Send voice note">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M3 20v-6l8-2-8-2V4l19 8-19 8Z"/></svg>
+      </button>
+    </div>
   </div>
   <script src="/static/app.js"></script>
 </body>
