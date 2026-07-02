@@ -46,9 +46,17 @@ def is_session_reset_command(text: str) -> bool:
     return (text or "").strip().casefold() == SESSION_RESET_KEYWORD
 
 
+def normalize_user_text(text: str) -> str:
+    """Strip voice/screenshot prefixes before routing logic."""
+    t = (text or "").strip()
+    if t.startswith("🎤"):
+        t = t[1:].strip()
+    return t
+
+
 def customer_stated_need(text: str) -> bool:
     """True when the customer already said what they want (not just hi/hello)."""
-    t = (text or "").strip().casefold()
+    t = normalize_user_text(text).casefold()
     if not t:
         return False
     needles = (
@@ -75,6 +83,12 @@ def customer_stated_need(text: str) -> bool:
         "problem",
         "issue",
         "help me",
+        "price",
+        "prices",
+        "cost",
+        "how much",
+        "britain",
+        "uk",
         "تركيب",
         "ركب",
         "شريحة",
@@ -90,6 +104,11 @@ def customer_stated_need(text: str) -> bool:
         "لا يعمل",
         "مشكلة",
         "مساعدة",
+        "سعر",
+        "أسعار",
+        "كم",
+        "بريطانيا",
+        "برطانيا",
     )
     return any(n in t for n in needles)
 
@@ -181,7 +200,7 @@ def handle_message(
     language = detect_language(text) if text else convo.language or "en"
     convo.language = language
 
-    user_content = text or ""
+    user_content = normalize_user_text(text)
     if is_image and not user_content:
         user_content = "[image]"
 
@@ -217,6 +236,16 @@ def handle_message(
     # First message with no stated problem → welcome only. Do not ask device type yet.
     if is_first_user_message and not customer_stated_need(user_content) and not is_image:
         reply = welcome_message(language)
+        db.add(Message(conversation_id=convo.id, role="assistant", content=reply))
+        db.commit()
+        return AgentResult(reply=reply, conversation_id=convo.id, language=language)
+
+    if not user_content.strip() and not is_image and not media_url:
+        reply = (
+            "🎙️ ما وصلتني رسالتك. جرّب تكتب سؤالك أو أعد إرسال الرسالة الصوتية."
+            if language == "ar"
+            else "🎙️ I didn't receive your message. Please type your question or resend the voice note."
+        )
         db.add(Message(conversation_id=convo.id, role="assistant", content=reply))
         db.commit()
         return AgentResult(reply=reply, conversation_id=convo.id, language=language)

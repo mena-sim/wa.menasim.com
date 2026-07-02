@@ -152,6 +152,22 @@ def test_parse_inbound_extracts_whatsapp_text():
     assert inbound.event_id == "msg_1"
 
 
+def test_extract_text_never_returns_raw_audio_dict():
+    from app.services.channels.whatsapp_telnyx_channel import _extract_text
+
+    blob = (
+        "{'audio': {'id': '1', 'mime_type': 'audio/ogg', "
+        "'url': 'https://rcs-outbound.us-central-1.telnyxcloudstorage.com/v.ogg'}}"
+    )
+    assert _extract_text({"text": blob}, {}) == ""
+
+
+def test_customer_stated_need_accepts_transcribed_voice_prefix():
+    from app.agent.engine import customer_stated_need
+
+    assert customer_stated_need("🎤 Hello, send me the prices of Britain?") is True
+
+
 def test_parse_inbound_extracts_audio_url_from_broken_text_blob():
     from app.services.channels.whatsapp_telnyx_channel import parse_inbound
 

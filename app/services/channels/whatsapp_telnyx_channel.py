@@ -200,12 +200,13 @@ def _looks_like_whatsapp_message(obj: dict[str, Any]) -> bool:
 
 def _resolve_whatsapp_message(payload: dict[str, Any]) -> dict[str, Any]:
     """Normalize Telnyx/Meta WhatsApp message shapes into one dict."""
-    wm = payload.get("whatsapp_message")
-    parsed = _parse_maybe_dict(wm)
-    if parsed and _looks_like_whatsapp_message(parsed):
-        return parsed
-    if isinstance(wm, dict) and _looks_like_whatsapp_message(wm):
-        return wm
+    for key in ("whatsapp_message", "message", "content"):
+        wm = payload.get(key)
+        parsed = _parse_maybe_dict(wm)
+        if parsed and _looks_like_whatsapp_message(parsed):
+            return parsed
+        if isinstance(wm, dict) and _looks_like_whatsapp_message(wm):
+            return wm
 
     # Some Telnyx webhooks put the whole inbound WA object in payload.text as a stringified dict.
     parsed_text = _parse_maybe_dict(payload.get("text"))
@@ -244,7 +245,13 @@ def _extract_text(payload: dict[str, Any], wm: dict[str, Any]) -> str:
             return wm["text"].strip()
 
     text = payload.get("text") or payload.get("body") or ""
-    if isinstance(text, str) and not _parse_maybe_dict(text):
+    if isinstance(text, str) and text.strip().startswith("{"):
+        body = _extract_text_body_from_blob(text)
+        if body:
+            return body
+        # Never pass Telnyx/Meta dict blobs through as chat text.
+        return ""
+    if isinstance(text, str):
         return str(text).strip()
     return ""
 
@@ -380,6 +387,10 @@ def parse_inbound(body: dict[str, Any]) -> InboundMessage | None:
             filename = picked.get("filename") or filename
             if not wm_type and (picked.get("content_type") or "").lower().startswith("audio/"):
                 wm_type = "audio"
+            elif not wm_type and any(
+                ext in (picked.get("url") or "").lower() for ext in _AUDIO_EXT
+            ):
+                wm_type = "audio"
             parse_notes.append("media_from_payload_scan")
 
     is_audio, is_image, is_unsupported = _classify_media(
@@ -447,6 +458,24 @@ def process_inbound(db: Session, inbound: InboundMessage) -> dict[str, Any]:
             "media_log": media_log,
         }
     inbound = prepared
+
+    if not (inbound.text or "").strip() and not inbound.media_url:
+        lang = "ar" if (convo.language or "") == "ar" else "en"
+        if any("\u0600" <= ch <= "\u06ff" for ch in (convo.language or "")):
+            lang = "ar"
+        reply = (
+            "🎙️ ما وصلتني الرسالة الصوتية. جرّب ترسلها مرة ثانية أو اكتب سؤالك نصيًا."
+            if lang == "ar"
+            else "🎙️ I didn't receive your voice note. Please try again or type your question."
+        )
+        media_log["action"] = "empty_inbound_rejected"
+        send_whatsapp(db, inbound.sender_id, reply)
+        return {
+            "replied": True,
+            "empty_inbound": True,
+            "escalated": False,
+            "media_log": media_log,
+        }
 
     result = handle_message(
         db,
