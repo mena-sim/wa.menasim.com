@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import subprocess
+from pathlib import Path
+
 from fastapi import APIRouter, Depends
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -10,6 +13,30 @@ from app.services import runtime_config
 from app.services.kb import store
 
 router = APIRouter(tags=["health"])
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _running_commit() -> str:
+    """Git commit checked out when THIS process started (frozen at import).
+
+    Computed once at module load so it reflects the running code, not the
+    repo on disk after a later `git pull` without a restart.
+    """
+    try:
+        out = subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=str(_REPO_ROOT),
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+        return out.strip() or "unknown"
+    except Exception:
+        return "unknown"
+
+
+# Frozen at process start (import time) — key to detecting "app not restarted".
+RUNNING_COMMIT = _running_commit()
 
 
 @router.get("/health")
@@ -33,3 +60,9 @@ def health_db(db: Session = Depends(get_db)) -> dict:
 @router.get("/health/kb")
 def health_kb() -> dict:
     return {"status": "ok", "chunks": store.count()}
+
+
+@router.get("/health/version")
+def health_version() -> dict:
+    """Commit the running process started with (used by deploy.sh to confirm a restart)."""
+    return {"commit": RUNNING_COMMIT}
