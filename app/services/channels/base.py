@@ -16,3 +16,4 @@ class InboundMessage:
     is_unsupported_media: bool = False  # PDF, document, video — not accepted
     media_content_type: str | None = None
     event_id: str | None = None  # for idempotency (webhook dedupe)
+    parse_debug: dict | None = None  # Telnyx payload shape / parser notes

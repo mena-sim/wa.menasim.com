@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import json
+import re
 from typing import Any
 
 import httpx
@@ -20,6 +21,22 @@ WHATSAPP_CHANNEL = "whatsapp"
 _AUDIO_EXT = (".ogg", ".opus", ".amr", ".m4a", ".mp3", ".aac", ".webm")
 _IMAGE_EXT = (".jpg", ".jpeg", ".png", ".webp", ".gif")
 _MEDIA_KEYS = ("audio", "image", "video", "document", "sticker")
+_URL_IN_TEXT_RE = re.compile(
+    r"""['"](?:url|link)['"]\s*:\s*['"](https?://[^'"]+)['"]""",
+    re.IGNORECASE,
+)
+_URL_IN_TEXT_TRUNC_RE = re.compile(
+    r"""['"](?:url|link)['"]\s*:\s*['"](https?://[^\s'"}]+)""",
+    re.IGNORECASE,
+)
+_MIME_IN_TEXT_RE = re.compile(
+    r"""['"]mime_type['"]\s*:\s*['"]([^'"]+)['"]""",
+    re.IGNORECASE,
+)
+_BODY_IN_TEXT_RE = re.compile(
+    r"""['"]body['"]\s*:\s*['"]((?:\\.|[^'\\])*)['"]""",
+    re.IGNORECASE,
+)
 
 
 def _phone_from_field(value: Any) -> str:
@@ -56,6 +73,123 @@ def _parse_maybe_dict(value: Any) -> dict[str, Any] | None:
         return obj if isinstance(obj, dict) else None
     except (ValueError, SyntaxError):
         return None
+
+
+def _extract_from_text_blob(text: str) -> tuple[str | None, str, str, str]:
+    """Best-effort parse when payload.text is a broken Python/JSON dict string."""
+    blob = (text or "").strip()
+    if not blob.startswith("{"):
+        return None, "", "", ""
+
+    parsed = _parse_maybe_dict(blob)
+    if parsed and _looks_like_whatsapp_message(parsed):
+        return _extract_media_from_wm(parsed)
+
+    media_url = None
+    mime = ""
+    wm_type = ""
+    if re.search(r"""['"]audio['"]\s*:""", blob):
+        wm_type = "audio"
+        m = _URL_IN_TEXT_RE.search(blob) or _URL_IN_TEXT_TRUNC_RE.search(blob)
+        if m:
+            media_url = m.group(1)
+        m = _MIME_IN_TEXT_RE.search(blob)
+        if m:
+            mime = m.group(1)
+    elif re.search(r"""['"]image['"]\s*:""", blob):
+        wm_type = "image"
+        m = _URL_IN_TEXT_RE.search(blob) or _URL_IN_TEXT_TRUNC_RE.search(blob)
+        if m:
+            media_url = m.group(1)
+        m = _MIME_IN_TEXT_RE.search(blob)
+        if m:
+            mime = m.group(1)
+
+    return media_url, mime, "", wm_type
+
+
+def _extract_text_body_from_blob(text: str) -> str:
+    parsed = _parse_maybe_dict(text)
+    if parsed:
+        body = _extract_text({"text": ""}, parsed)
+        if body:
+            return body
+    m = _BODY_IN_TEXT_RE.search(text or "")
+    if m:
+        return m.group(1).encode("utf-8").decode("unicode_escape")
+    return ""
+
+
+def _find_media_in_obj(obj: Any, found: list[dict[str, str]] | None = None) -> list[dict[str, str]]:
+    """Recursively collect media URLs anywhere in a Telnyx webhook payload."""
+    if found is None:
+        found = []
+    if isinstance(obj, dict):
+        url = None
+        for key in ("url", "link", "href"):
+            val = obj.get(key)
+            if isinstance(val, str) and val.startswith("http"):
+                url = val
+                break
+        if url:
+            found.append(
+                {
+                    "url": url,
+                    "content_type": str(obj.get("mime_type") or obj.get("content_type") or ""),
+                    "filename": str(obj.get("filename") or obj.get("name") or ""),
+                    "kind": str(obj.get("type") or ""),
+                }
+            )
+        for value in obj.values():
+            _find_media_in_obj(value, found)
+    elif isinstance(obj, list):
+        for item in obj:
+            _find_media_in_obj(item, found)
+    elif isinstance(obj, str) and obj.strip().startswith("{"):
+        parsed = _parse_maybe_dict(obj)
+        if parsed:
+            _find_media_in_obj(parsed, found)
+    return found
+
+
+def _pick_media_candidate(candidates: list[dict[str, str]]) -> dict[str, str] | None:
+    if not candidates:
+        return None
+    for item in candidates:
+        ct = (item.get("content_type") or "").lower()
+        if ct.startswith("audio/"):
+            return item
+    for item in candidates:
+        if "audio" in (item.get("kind") or "").lower():
+            return item
+    for item in candidates:
+        url = (item.get("url") or "").lower()
+        if any(ext in url for ext in _AUDIO_EXT):
+            return item
+    for item in candidates:
+        ct = (item.get("content_type") or "").lower()
+        if ct.startswith("image/"):
+            return item
+    return candidates[0]
+
+
+def payload_debug_summary(payload: dict[str, Any]) -> dict[str, Any]:
+    wm = payload.get("whatsapp_message")
+    text = payload.get("text")
+    summary = {
+        "payload_type": str(payload.get("type") or ""),
+        "payload_keys": sorted(payload.keys()),
+        "text_type": type(text).__name__,
+        "text_len": len(str(text or "")),
+        "text_preview": str(text or "")[:180],
+        "whatsapp_message_type": type(wm).__name__ if wm is not None else "missing",
+        "media_count": len(payload.get("media") or []) if isinstance(payload.get("media"), list) else 0,
+    }
+    if isinstance(payload.get("media"), list) and payload["media"]:
+        first = payload["media"][0] or {}
+        summary["media0_content_type"] = str(first.get("content_type") or "")
+        summary["media0_has_url"] = bool(first.get("url"))
+    return summary
 
 
 def _looks_like_whatsapp_message(obj: dict[str, Any]) -> bool:
@@ -221,12 +355,50 @@ def parse_inbound(body: dict[str, Any]) -> InboundMessage | None:
         content_type = wm_content_type or content_type
         filename = wm_filename or filename
 
+    parse_notes: list[str] = []
+    raw_text = payload.get("text")
+    if not text and isinstance(raw_text, str) and raw_text.strip().startswith("{"):
+        body_from_blob = _extract_text_body_from_blob(raw_text)
+        if body_from_blob:
+            text = body_from_blob
+            parse_notes.append("text_from_blob")
+
+    if not media_url and isinstance(raw_text, str) and raw_text.strip().startswith("{"):
+        blob_url, blob_ct, blob_fn, blob_type = _extract_from_text_blob(raw_text)
+        if blob_url:
+            media_url = blob_url
+            content_type = blob_ct or content_type
+            filename = blob_fn or filename
+            wm_type = blob_type or wm_type
+            parse_notes.append("media_from_text_blob")
+
+    if not media_url:
+        picked = _pick_media_candidate(_find_media_in_obj(payload))
+        if picked:
+            media_url = picked.get("url") or media_url
+            content_type = picked.get("content_type") or content_type
+            filename = picked.get("filename") or filename
+            if not wm_type and (picked.get("content_type") or "").lower().startswith("audio/"):
+                wm_type = "audio"
+            parse_notes.append("media_from_payload_scan")
+
     is_audio, is_image, is_unsupported = _classify_media(
         media_url=media_url,
         content_type=content_type,
         wm_type=wm_type,
         filename=filename,
     )
+
+    parse_debug = payload_debug_summary(payload)
+    if parse_notes:
+        parse_debug["parse_notes"] = parse_notes
+    if (
+        not media_url
+        and isinstance(raw_text, str)
+        and raw_text.strip().startswith("{")
+        and re.search(r"""['"]audio['"]\s*:""", raw_text)
+    ):
+        parse_debug["parse_error"] = "audio_dict_in_text_but_no_url_extracted"
 
     event_id = str(payload.get("id") or data.get("id") or "")
     return InboundMessage(
@@ -239,6 +411,7 @@ def parse_inbound(body: dict[str, Any]) -> InboundMessage | None:
         is_unsupported_media=is_unsupported,
         media_content_type=content_type or None,
         event_id=event_id or None,
+        parse_debug=parse_debug,
     )
 
 
@@ -259,6 +432,8 @@ def process_inbound(db: Session, inbound: InboundMessage) -> dict[str, Any]:
         "has_media_url": bool(inbound.media_url),
         "text_len": len(inbound.text or ""),
     }
+    if inbound.parse_debug:
+        parse_log["payload_debug"] = inbound.parse_debug
 
     prepared, media_log = inbound_media.prepare_inbound_media(db, inbound)
     media_log = {"parse": parse_log, **media_log}

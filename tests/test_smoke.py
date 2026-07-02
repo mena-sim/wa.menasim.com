@@ -152,6 +152,53 @@ def test_parse_inbound_extracts_whatsapp_text():
     assert inbound.event_id == "msg_1"
 
 
+def test_parse_inbound_extracts_audio_url_from_broken_text_blob():
+    from app.services.channels.whatsapp_telnyx_channel import parse_inbound
+
+    # Truncated dict strings (unclosed quote) happen in Telnyx payload.text — regex should still recover URL.
+    text_blob = (
+        "{'audio': {'id': '1056246466759040', 'mime_type': 'audio/ogg; codecs=opus', "
+        "'sha256': 'abc', 'url': 'https://rcs-outbound.us-central-1.telnyxcloudstorage.com/voice.ogg"
+    )
+    body = {
+        "data": {
+            "event_type": "message.received",
+            "payload": {"id": "voice-broken", "from": "+447954823445", "text": text_blob},
+        }
+    }
+    inbound = parse_inbound(body)
+    assert inbound is not None
+    assert inbound.is_audio is True
+    assert "telnyxcloudstorage.com" in (inbound.media_url or "")
+    assert "media_from_text_blob" in (inbound.parse_debug or {}).get("parse_notes", [])
+
+
+def test_parse_inbound_scans_nested_payload_for_audio_url():
+    from app.services.channels.whatsapp_telnyx_channel import parse_inbound
+
+    body = {
+        "data": {
+            "event_type": "message.received",
+            "payload": {
+                "id": "voice-nested",
+                "from": "+447954823445",
+                "text": "",
+                "type": "WHATSAPP",
+                "whatsapp_message": {
+                    "audio": {
+                        "url": "https://rcs-outbound.us-central-1.telnyxcloudstorage.com/a.ogg",
+                        "mime_type": "audio/ogg; codecs=opus",
+                    }
+                },
+            },
+        }
+    }
+    inbound = parse_inbound(body)
+    assert inbound is not None
+    assert inbound.is_audio is True
+    assert inbound.text == ""
+
+
 def test_classify_whatsapp_voice_note():
     from app.services.channels.whatsapp_telnyx_channel import parse_inbound
 

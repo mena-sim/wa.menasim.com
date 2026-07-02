@@ -127,4 +127,13 @@ def prepare_inbound_media(
 
     if inbound.media_url:
         log["action"] = "media_not_handled"
+    elif (
+        not inbound.text
+        and not inbound.is_audio
+        and not inbound.is_image
+        and not inbound.is_unsupported_media
+    ):
+        log["hint"] = "empty_inbound_no_text_or_media"
+    elif (inbound.text or "").strip().startswith("{") and "audio" in (inbound.text or ""):
+        log["hint"] = "audio_dict_in_text_not_recognized"
     return inbound, log

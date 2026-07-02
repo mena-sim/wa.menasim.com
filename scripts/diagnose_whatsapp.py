@@ -4,7 +4,8 @@
 Run on the server from the repo root:
 
     ./scripts/diagnose-whatsapp +447954823445
-    .venv/bin/python3 scripts/diagnose_whatsapp.py +447954823445
+    ./scripts/diagnose-whatsapp +447954823445 --test-last-audio
+    ./scripts/diagnose-whatsapp +447954823445 --test-url "https://..."
 
 Shows: voice config, conversation messages (look for 🎤 / 📷), webhook events with media_log.
 """
@@ -13,6 +14,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -31,6 +33,10 @@ from app.models.message import Message  # noqa: E402
 from app.models.webhook_event import WebhookEvent  # noqa: E402
 from app.services import runtime_config  # noqa: E402
 from app.services.channels.base import InboundMessage  # noqa: E402
+from app.services.channels.whatsapp_telnyx_channel import (  # noqa: E402
+    _extract_from_text_blob,
+    _URL_IN_TEXT_RE,
+)
 
 
 def _mask(s: str | None, show: int = 4) -> str:
@@ -48,7 +54,53 @@ def _normalize_phone(phone: str) -> str:
     return phone
 
 
-def diagnose(phone: str, test_url: str | None = None) -> None:
+def _find_audio_url_in_text(text: str) -> str | None:
+    if not text:
+        return None
+    url, _, _, _ = _extract_from_text_blob(text)
+    if url:
+        return url
+    m = _URL_IN_TEXT_RE.search(text)
+    return m.group(1) if m else None
+
+
+def _verdict_from_media_log(log: dict) -> str:
+    action = log.get("action") or "none"
+    parse = log.get("parse") or log.get("input") or {}
+    hint = log.get("hint") or ""
+    error = log.get("error") or ""
+    payload_debug = parse.get("payload_debug") or log.get("payload_debug") or {}
+
+    if action == "transcribed":
+        return "OK — voice transcribed successfully"
+    if action == "transcribe_error":
+        return f"FAIL — download or Whisper error: {error}"
+    if action.startswith("transcribe_skipped"):
+        return f"FAIL — transcription not enabled/configured ({action})"
+    if hint == "empty_inbound_no_text_or_media":
+        return (
+            "FAIL — Telnyx webhook had NO text and NO media URL (parser found nothing to transcribe). "
+            "Check payload_debug below — voice may not be in the webhook at all."
+        )
+    if hint == "audio_dict_in_text_not_recognized" or payload_debug.get("parse_error"):
+        return (
+            "FAIL — voice dict seen in text but audio URL could not be extracted "
+            "(often truncated/malformed payload.text)"
+        )
+    if parse.get("parsed_audio") and not action.startswith("transcribe"):
+        return "FAIL — parsed as audio but transcription did not run (unexpected)"
+    if not parse.get("parsed_audio") and parse.get("text_len", 0) > 0 and "audio" in str(
+        payload_debug.get("text_preview") or ""
+    ):
+        return "FAIL — audio dict in payload.text but NOT parsed as audio (deploy latest code or broken dict)"
+    if action == "none" and parse.get("text_len", 0) > 100:
+        return "FAIL — message treated as plain text, not voice (parser did not detect audio)"
+    if action == "none":
+        return "FAIL — no media pipeline ran (not detected as audio)"
+    return f"status: action={action}"
+
+
+def diagnose(phone: str, test_url: str | None = None, test_last_audio: bool = False) -> None:
     phone = _normalize_phone(phone)
     init_db()
     db = SessionLocal()
@@ -72,6 +124,7 @@ def diagnose(phone: str, test_url: str | None = None) -> None:
             )
         ).scalar_one_or_none()
 
+        last_audio_blob = ""
         print("\n--- Conversation ---")
         if not conv:
             print("  No WhatsApp conversation found for this number.")
@@ -97,22 +150,31 @@ def diagnose(phone: str, test_url: str | None = None) -> None:
 
             print(f"\n--- Last {len(msgs)} messages (newest first) ---")
             for m in msgs:
-                content = (m.content or "")[:220]
+                full = m.content or ""
+                content = full[:220]
                 flags = []
                 if m.media_url:
                     flags.append("HAS_MEDIA_URL")
-                if content.startswith("🎤"):
+                if full.startswith("🎤"):
                     flags.append("VOICE_TRANSCRIBED")
-                elif content.startswith("🎙️"):
+                elif full.startswith("🎙️"):
                     flags.append("VOICE_FAIL_MSG")
-                if content.startswith("📷") or "📷 [" in content:
+                if "📷" in full:
                     flags.append("IMAGE_ANALYZED")
-                if not content.strip() and m.media_url:
-                    flags.append("EMPTY_TEXT+URL")
-                if content.strip() == "[image]":
+                if not full.strip():
+                    flags.append("EMPTY")
+                if full.strip().startswith("{") and "audio" in full:
+                    flags.append("RAW_AUDIO_DICT")
+                    if not last_audio_blob:
+                        last_audio_blob = full
+                if full.strip().startswith("{") and "text" in full and "body" in full:
+                    flags.append("RAW_TEXT_DICT")
+                if full.strip() == "[image]":
                     flags.append("IMAGE_PLACEHOLDER_ONLY")
                 flag_str = f" [{', '.join(flags)}]" if flags else ""
                 print(f"  [{m.created_at}] {m.role}: {content!r}{flag_str}")
+                if len(full) > 220:
+                    print(f"    (stored length: {len(full)} chars)")
 
         events = (
             db.execute(
@@ -126,20 +188,23 @@ def diagnose(phone: str, test_url: str | None = None) -> None:
         )
 
         print(f"\n--- Last {len(events)} webhook events for this sender ---")
+        latest_log: dict | None = None
         if not events:
             print("  (none — try sending a test message, then re-run)")
-        for e in events:
+        for i, e in enumerate(events):
             print(f"  [{e.created_at}] {e.event_type or '?'} | status={e.status} | event_id={e.event_id or '-'}")
             if not e.detail:
                 continue
             try:
                 parsed = json.loads(e.detail)
-                action = parsed.get("action", parsed.get("parse", ""))
-                print(f"    media action: {action}")
+                if i == 0:
+                    latest_log = parsed
+                print(f"    VERDICT: {_verdict_from_media_log(parsed)}")
                 for key in (
+                    "hint",
+                    "error",
                     "transcript_preview",
                     "vision_preview",
-                    "error",
                     "download_bytes",
                     "download_content_type",
                     "voice_enabled",
@@ -152,19 +217,38 @@ def diagnose(phone: str, test_url: str | None = None) -> None:
                         if isinstance(val, dict):
                             val = json.dumps(val, ensure_ascii=False)
                         print(f"    {key}: {val}")
+                parse = parsed.get("parse") or {}
+                if isinstance(parse, dict) and parse.get("payload_debug"):
+                    print(
+                        f"    payload_debug: {json.dumps(parse['payload_debug'], ensure_ascii=False)}"
+                    )
             except json.JSONDecodeError:
                 print(f"    detail: {e.detail[:300]}")
 
-        if test_url:
-            print("\n--- Live transcription test ---")
+        if latest_log:
+            print("\n--- Latest webhook summary ---")
+            print(f"  {_verdict_from_media_log(latest_log)}")
+
+        audio_url = test_url
+        if not audio_url and (test_last_audio or last_audio_blob):
+            audio_url = _find_audio_url_in_text(last_audio_blob)
+            if audio_url:
+                print(f"\n--- Extracted audio URL from last RAW_AUDIO_DICT message ---")
+                print(f"  {audio_url[:120]}{'...' if len(audio_url) > 120 else ''}")
+            elif last_audio_blob:
+                print("\n--- Could not extract audio URL from stored dict (likely truncated) ---")
+                print("  Send a NEW voice note after deploy, or paste full Telnyx media URL with --test-url")
+
+        if audio_url:
+            print("\n--- Live download + transcription test ---")
             from app.services import inbound_media
 
             inbound = InboundMessage(
                 channel="whatsapp",
                 sender_id=phone,
                 is_audio=True,
-                media_url=test_url,
-                media_content_type="",
+                media_url=audio_url,
+                media_content_type="audio/ogg",
             )
             result, media_log = inbound_media.prepare_inbound_media(db, inbound)
             if isinstance(result, str):
@@ -172,17 +256,14 @@ def diagnose(phone: str, test_url: str | None = None) -> None:
             else:
                 print(f"  user_text: {result.text!r}")
             print(f"  media_log: {json.dumps(media_log, ensure_ascii=False, indent=2)}")
+            print(f"  LIVE VERDICT: {_verdict_from_media_log(media_log)}")
 
         print("\n--- How to read this ---")
-        print("  VOICE_TRANSCRIBED  = voice converted to text (🎤 in chat history)")
-        print("  VOICE_FAIL_MSG     = our app replied that transcription failed")
-        print("  IMAGE_PLACEHOLDER  = voice may have been misclassified as image → LLM says can't read audio")
-        print("  media_log.action:")
-        print("    transcribed                 = OK")
-        print("    transcribe_error            = download or Whisper failed (see error)")
-        print("    transcribe_skipped_*        = voice disabled or missing DeepInfra key")
-        print("    media_not_handled           = attachment not classified as audio/image")
-        print("    vision_ok / vision_error    = screenshot path")
+        print("  RAW_AUDIO_DICT     = voice stored as Telnyx dict string (parser/transcribe issue)")
+        print("  EMPTY              = webhook had no text (see payload_debug on latest event)")
+        print("  VOICE_TRANSCRIBED  = 🎤 prefix means transcription worked")
+        print("  Steps: 1) git pull + deploy  2) send NEW voice  3) re-run this script")
+        print("  Test download/Whisper only: --test-last-audio or --test-url 'https://...'")
         print("=" * 60)
     finally:
         db.close()
@@ -195,8 +276,13 @@ def main() -> None:
         "--test-url",
         help="Optional Telnyx media URL to test download + Whisper live",
     )
+    parser.add_argument(
+        "--test-last-audio",
+        action="store_true",
+        help="Extract URL from last RAW_AUDIO_DICT chat message and test download + Whisper",
+    )
     args = parser.parse_args()
-    diagnose(args.phone, test_url=args.test_url)
+    diagnose(args.phone, test_url=args.test_url, test_last_audio=args.test_last_audio)
 
 
 if __name__ == "__main__":
