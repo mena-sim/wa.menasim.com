@@ -175,6 +175,13 @@ class WhatsAppTestInboundIn(BaseModel):
     send_reply: bool = False
 
 
+@router.post("/whatsapp/auto-configure")
+def whatsapp_auto_configure(
+    db: Session = Depends(get_db), _: str = Depends(admin_auth.require_admin)
+) -> dict:
+    return telnyx_diagnostics.auto_configure(db)
+
+
 @router.get("/whatsapp/status")
 def whatsapp_status(
     db: Session = Depends(get_db), _: str = Depends(admin_auth.require_admin)
@@ -219,7 +226,7 @@ def _status_of(convo: Conversation) -> str:
 @router.get("/conversations")
 def list_conversations(
     filter: str = "all",
-    channel: str = "all",
+    channel: str = "whatsapp",
     q: str = "",
     db: Session = Depends(get_db),
     _: str = Depends(admin_auth.require_admin),

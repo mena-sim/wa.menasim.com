@@ -48,6 +48,7 @@ export const api = {
   testConfig: (group) => request("POST", `/admin/config/test/${group}`),
 
   getWhatsappStatus: () => request("GET", "/admin/whatsapp/status"),
+  autoConfigureWhatsapp: () => request("POST", "/admin/whatsapp/auto-configure"),
   testWhatsappSend: (to, text) => request("POST", "/admin/whatsapp/test-send", { to, text }),
   testWhatsappInbound: (from_number, text, send_reply = false) =>
     request("POST", "/admin/whatsapp/test-inbound", { from_number, text, send_reply }),

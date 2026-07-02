@@ -95,15 +95,28 @@ def send_whatsapp(
     api_key = runtime_config.get(db, "telnyx_api_key")
     wa_from = normalize_e164(runtime_config.get(db, "telnyx_whatsapp_from"))
     to = normalize_e164(to)
-    profile_id = runtime_config.get(db, "telnyx_messaging_profile_id")
 
     payload: dict[str, Any] = {
         "from": wa_from,
         "to": to,
         "whatsapp_message": _whatsapp_payload(text, media_url=media_url),
     }
-    if profile_id:
-        payload["messaging_profile_id"] = profile_id
+
+    # Only attach a validated messaging profile — a wrong ID (e.g. WABA ID) breaks sends.
+    try:
+        with httpx.Client(timeout=15.0) as client:
+            from app.services.telnyx_resolve import effective_profile_id
+
+            resolved, _warnings = effective_profile_id(
+                client,
+                api_key,
+                configured_profile=runtime_config.get(db, "telnyx_messaging_profile_id"),
+                from_number=wa_from,
+            )
+            if resolved:
+                payload["messaging_profile_id"] = resolved
+    except httpx.HTTPError:
+        pass
 
     try:
         with httpx.Client(timeout=30.0) as client:

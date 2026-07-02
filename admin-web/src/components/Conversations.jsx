@@ -10,12 +10,6 @@ const FILTERS = [
   { key: "closed", label: "Closed" },
 ];
 
-const CHANNELS = [
-  { key: "whatsapp", label: "WhatsApp" },
-  { key: "web", label: "Web" },
-  { key: "all", label: "All channels" },
-];
-
 function initials(s) {
   const digits = (s || "").replace(/[^0-9]/g, "");
   return digits.slice(-2) || (s || "?").slice(0, 2).toUpperCase();
@@ -38,7 +32,6 @@ function fmtTime(iso) {
 export default function Conversations({ toast }) {
   const [list, setList] = useState([]);
   const [filter, setFilter] = useState("all");
-  const [channel, setChannel] = useState("whatsapp");
   const [q, setQ] = useState("");
   const [selectedId, setSelectedId] = useState(null);
   const [convo, setConvo] = useState(null);
@@ -48,7 +41,7 @@ export default function Conversations({ toast }) {
 
   async function loadList() {
     try {
-      const data = await api.listConversations(filter, q, channel);
+      const data = await api.listConversations(filter, q, "whatsapp");
       setList(data.conversations);
     } catch (e) {
       /* polling errors are silent */
@@ -70,7 +63,7 @@ export default function Conversations({ toast }) {
     const t = setInterval(loadList, 5000);
     return () => clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filter, q, channel]);
+  }, [filter, q]);
 
   useEffect(() => {
     if (!selectedId) return;
@@ -152,7 +145,7 @@ export default function Conversations({ toast }) {
     <>
       <div className="sessions" style={mobileChat ? { display: undefined } : undefined}>
         <div className="head">
-          <h2>Conversations</h2>
+          <h2>WhatsApp</h2>
           <div className="search-wrap">
             <Icon name="search" />
             <input
@@ -162,17 +155,6 @@ export default function Conversations({ toast }) {
               onChange={(e) => setQ(e.target.value)}
             />
           </div>
-        </div>
-        <div className="filters">
-          {CHANNELS.map((f) => (
-            <div
-              key={f.key}
-              className={`chip ${channel === f.key ? "active" : ""}`}
-              onClick={() => setChannel(f.key)}
-            >
-              {f.label}
-            </div>
-          ))}
         </div>
         <div className="filters">
           {FILTERS.map((f) => (
@@ -188,9 +170,7 @@ export default function Conversations({ toast }) {
         <div className="session-list">
           {list.length === 0 && (
             <div className="empty-note">
-              {channel === "whatsapp"
-                ? "No WhatsApp conversations yet. Send a message to your business number, or use Settings → WhatsApp → Test agent."
-                : "No conversations yet. Messages from the web widget or WhatsApp will appear here."}
+              No WhatsApp conversations yet. Send a message to your business number, or use Settings → WhatsApp → Auto-detect / Test agent.
             </div>
           )}
           {list.map((s) => (
@@ -199,17 +179,13 @@ export default function Conversations({ toast }) {
               className={`session-item ${s.id === selectedId ? "active" : ""}`}
               onClick={() => select(s.id)}
             >
-              <div className="avatar">{initials(s.name)}</div>
+              <div className="avatar">{initials(s.sender_id || s.name)}</div>
               <div className="session-meta">
                 <div className="row1">
-                  <span>{s.channel === "whatsapp" ? s.sender_id : s.name}</span>
+                  <span>{s.sender_id || s.name}</span>
                   <span className={`badge ${badgeClass(s.status)}`}>{statusLabel(s.status)}</span>
                 </div>
                 <div className="row2">{s.last || "…"}</div>
-                <div className="row2" style={{ opacity: 0.7, fontSize: "0.85em" }}>
-                  {s.channel === "whatsapp" ? "WhatsApp" : "Web"}
-                  {s.channel === "whatsapp" && s.name !== s.sender_id ? ` · ${s.name}` : ""}
-                </div>
                 {s.handed_over && (
                   <span className="handoff-flag">
                     <Icon name="handoff" /> Human replying
@@ -228,9 +204,9 @@ export default function Conversations({ toast }) {
               <Icon name="back" />
             </button>
             <div>
-              <h1>Conversations</h1>
+              <h1>WhatsApp chats</h1>
               <div className="sub">
-                {list.length} sessions · {liveCount} live · {handoffCount} handed over
+                {list.length} conversations · {liveCount} live · {handoffCount} handed over
               </div>
             </div>
           </div>

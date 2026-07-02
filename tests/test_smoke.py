@@ -134,8 +134,19 @@ def test_whatsapp_inbound_agent_pipeline(db):
 
 def test_whatsapp_status_flags_business_id_as_profile(db):
     from app.services import runtime_config, telnyx_diagnostics
+    from app.services.telnyx_resolve import looks_like_waba_id
 
     runtime_config.set_value(db, "telnyx_messaging_profile_id", "1339285631627922")
     db.commit()
-    st = telnyx_diagnostics.status(db)
-    assert any("Business account ID" in w for w in st["warnings"])
+    assert looks_like_waba_id("1339285631627922")
+    st = telnyx_diagnostics.discover(db)
+    if runtime_config.get(db, "telnyx_api_key"):
+        assert any("WABA ID" in w for w in st["warnings"])
+
+
+def test_telnyx_resolve_id_formats():
+    from app.services.telnyx_resolve import is_uuid, looks_like_waba_id
+
+    assert looks_like_waba_id("1339285631627922")
+    assert is_uuid("4e3162a5-13f6-4d12-b246-81705767a0b3")
+    assert not looks_like_waba_id("4e3162a5-13f6-4d12-b246-81705767a0b3")

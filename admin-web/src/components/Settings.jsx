@@ -121,6 +121,33 @@ export default function Settings({ toast }) {
     }
   }
 
+  async function autoConfigureWhatsapp() {
+    setWaBusy("auto");
+    try {
+      const res = await api.autoConfigureWhatsapp();
+      await load();
+      await loadWhatsappStatus();
+      toast(res.message, !res.ok);
+      if (res.discover?.suggested_profile_id) {
+        setConn((c) => ({
+          ...c,
+          whatsapp: {
+            status: res.ok ? "ok" : "fail",
+            msg: [
+              res.message,
+              res.discover.suggested_profile_id && `Profile: ${res.discover.suggested_profile_id}`,
+              res.discover.suggested_waba_id && `WABA: ${res.discover.suggested_waba_id}`,
+            ].filter(Boolean).join(" · "),
+          },
+        }));
+      }
+    } catch (e) {
+      toast(e.message, true);
+    } finally {
+      setWaBusy("");
+    }
+  }
+
   async function runWhatsappTest(kind) {
     const phone = (testPhone || groups?.whatsapp?.telnyx_whatsapp_from || "").trim();
     if (!phone && kind !== "connect") {
@@ -238,8 +265,8 @@ export default function Settings({ toast }) {
                   onChange={(e) => setField("telnyx", "telnyx_api_key", e.target.value)} />
               </Field>
               <div className="row2col">
-                <Field label="Messaging profile ID" hint="Telnyx UUID (e.g. 4001c123-...). Not the WhatsApp Business account ID.">
-                  <input placeholder="4001c123-..." value={g.telnyx.telnyx_messaging_profile_id}
+                <Field label="Messaging profile ID" hint="Telnyx messaging profile UUID (NOT WABA ID). Use Auto-detect if unsure.">
+                  <input placeholder="4e3162a5-13f6-4d12-b246-81705767a0b3" value={g.telnyx.telnyx_messaging_profile_id}
                     onChange={(e) => setField("telnyx", "telnyx_messaging_profile_id", e.target.value)} />
                 </Field>
                 <Field label="Webhook public key (Ed25519)">
@@ -264,7 +291,7 @@ export default function Settings({ toast }) {
             <div className="card">
               <h3><Icon name="whatsapp" /> WhatsApp number</h3>
               <div className="desc">
-                Customers message this number on WhatsApp. Inbound messages are routed through the same AI agent as the web chat tester.
+                Customers message this number on WhatsApp. All support chats are handled by the AI agent on the WhatsApp channel.
               </div>
               <div className="row2col">
                 <Field label="Sender (from) number" hint="E.164 format, e.g. +447822002099">
@@ -276,7 +303,7 @@ export default function Settings({ toast }) {
                     onChange={(e) => setField("whatsapp", "whatsapp_display_name", e.target.value)} />
                 </Field>
               </div>
-              <Field label="Business account ID" hint="Meta / WhatsApp Business account ID (reference only — not used for sending).">
+              <Field label="Business account ID (WABA)" hint="Meta WhatsApp Business account ID, e.g. 1339285631627922. Reference only — filled by Auto-detect.">
                 <input placeholder="1339285631627922" value={g.whatsapp.whatsapp_business_id}
                   onChange={(e) => setField("whatsapp", "whatsapp_business_id", e.target.value)} />
               </Field>
@@ -284,6 +311,12 @@ export default function Settings({ toast }) {
                 <div className="hint" style={{ marginBottom: 12 }}>
                   Webhook: {waStatus.webhook_url} · WA conversations: {waStatus.whatsapp_conversations} ·
                   processed events: {waStatus.processed_webhook_events}
+                  {waStatus.suggested_profile_id && (
+                    <div style={{ marginTop: 6 }}>Suggested profile: {waStatus.suggested_profile_id}</div>
+                  )}
+                  {waStatus.suggested_waba_id && (
+                    <div style={{ marginTop: 6 }}>Suggested WABA: {waStatus.suggested_waba_id}</div>
+                  )}
                   {(waStatus.warnings || []).map((w) => (
                     <div key={w} style={{ color: "var(--warn, #b45309)", marginTop: 6 }}>⚠ {w}</div>
                   ))}
@@ -293,6 +326,9 @@ export default function Settings({ toast }) {
                 <input placeholder="+447..." value={testPhone} onChange={(e) => setTestPhone(e.target.value)} />
               </Field>
               <div className="field-actions" style={{ flexWrap: "wrap", gap: 8 }}>
+                <button className="btn secondary" disabled={!!waBusy} onClick={() => autoConfigureWhatsapp()}>
+                  {waBusy === "auto" ? "Detecting…" : "Auto-detect from Telnyx"}
+                </button>
                 <button className="btn secondary" disabled={!!waBusy} onClick={() => runWhatsappTest("connect")}>
                   {waBusy === "connect" ? "Testing…" : "Test connectivity"}
                 </button>
