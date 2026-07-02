@@ -24,6 +24,9 @@ class Conversation(Base):
     handed_over: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     closed: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     customer_name: Mapped[str] = mapped_column(String(128), default="")
+    # Identity verification: set once the customer confirms order number + matching email.
+    verified: Mapped[bool] = mapped_column(Boolean, default=False)
+    verified_order: Mapped[str] = mapped_column(String(64), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow

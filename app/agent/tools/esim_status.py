@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict
 from typing import Any
 
+from app.agent.tools import identity
 from app.agent.tools.context import ToolContext
 from app.services.providers import registry
 
@@ -36,6 +37,8 @@ def run(
     order_ref: str | None = None,
     provider: str | None = None,
 ) -> dict[str, Any]:
+    if not identity.is_verified(ctx):
+        return identity.unverified_result()
     if not (iccid or order_ref):
         return {"found": False, "message": "Provide an ICCID or order reference to check status."}
 

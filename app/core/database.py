@@ -51,6 +51,8 @@ _EXTRA_COLUMNS: dict[str, dict[str, str]] = {
         "handed_over": "BOOLEAN DEFAULT 0",
         "closed": "BOOLEAN DEFAULT 0",
         "customer_name": "VARCHAR(128) DEFAULT ''",
+        "verified": "BOOLEAN DEFAULT 0",
+        "verified_order": "VARCHAR(64) DEFAULT ''",
     },
     "messages": {
         "is_human": "BOOLEAN DEFAULT 0",

@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import os
+import uuid
+from pathlib import Path
+
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
@@ -12,6 +16,9 @@ from app.services.channels.web_channel import handle_web_message
 logger = get_logger(__name__)
 
 router = APIRouter(prefix="/api", tags=["chat"])
+
+MEDIA_DIR = Path("data/media")
+_ALLOWED_IMAGE_EXT = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 
 
 @router.post("/chat", response_model=ChatResponse)
@@ -66,6 +73,40 @@ async def chat_voice(
     result = handle_web_message(db, session_id=session_id, text=text)
     return {
         "transcript": text,
+        "reply": result.reply,
+        "conversation_id": result.conversation_id,
+        "language": result.language,
+        "media_url": result.media_url,
+        "escalated": result.escalated,
+        "needs_human": result.needs_human,
+    }
+
+
+@router.post("/chat/image")
+async def chat_image(
+    session_id: str = Form(...),
+    caption: str = Form(""),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Accept an uploaded screenshot/image, store it, then let the agent respond."""
+    if not (file.content_type or "").startswith("image/"):
+        raise HTTPException(status_code=400, detail="Only image uploads are supported.")
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="Empty file.")
+    ext = os.path.splitext(file.filename or "")[1].lower()
+    if ext not in _ALLOWED_IMAGE_EXT:
+        ext = ".png"
+    MEDIA_DIR.mkdir(parents=True, exist_ok=True)
+    name = f"up_{uuid.uuid4().hex}{ext}"
+    (MEDIA_DIR / name).write_bytes(data)
+    media_url = f"/media/{name}"
+    result = handle_web_message(
+        db, session_id=session_id, text=(caption or "").strip(), media_url=media_url, is_image=True
+    )
+    return {
+        "uploaded_url": media_url,
         "reply": result.reply,
         "conversation_id": result.conversation_id,
         "language": result.language,

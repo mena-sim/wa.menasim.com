@@ -5,6 +5,7 @@ from typing import Any
 
 from sqlalchemy import func, select
 
+from app.agent.tools import identity
 from app.agent.tools.context import ToolContext
 from app.models.skill_call import SkillCall
 from app.services.providers import registry
@@ -73,6 +74,14 @@ def run(
     order_number: str | None = None,
     email: str | None = None,
 ) -> dict[str, Any]:
+    # Guardrail: identity must be verified (order number + matching email) first.
+    if not identity.is_verified(ctx):
+        return identity.unverified_result()
+
+    # Fall back to the order confirmed during verification if none was passed.
+    if not order_number:
+        order_number = getattr(ctx.conversation, "verified_order", "") or None
+
     # Guardrail: cap resends per conversation per 24h; the 4th auto-escalates.
     if _recent_resend_count(ctx) >= _MAX_RESENDS_24H:
         from app.agent.tools import escalate as escalate_tool

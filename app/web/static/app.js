@@ -2,7 +2,10 @@ const messagesEl = document.getElementById("messages");
 const form = document.getElementById("composer");
 const input = document.getElementById("input");
 const sendBtn = document.getElementById("sendBtn");
-const imgBtn = document.getElementById("imgBtn");
+const emojiBtn = document.getElementById("emojiBtn");
+const emojiPanel = document.getElementById("emojiPanel");
+const attachBtn = document.getElementById("attachBtn");
+const fileInput = document.getElementById("fileInput");
 const micBtn = document.getElementById("micBtn");
 const recBar = document.getElementById("recBar");
 const recTimeEl = document.getElementById("recTime");
@@ -44,7 +47,8 @@ function isArabic(s) {
 
 function setBusy(busy) {
   sendBtn.disabled = busy;
-  imgBtn.disabled = busy;
+  if (attachBtn) attachBtn.disabled = busy;
+  if (emojiBtn) emojiBtn.disabled = busy;
   if (micBtn) micBtn.disabled = busy;
   input.disabled = busy;
 }
@@ -91,11 +95,89 @@ form.addEventListener("submit", (e) => {
   send(text, false);
 });
 
-imgBtn.addEventListener("click", () => {
-  send("", true);
-});
-
 input.addEventListener("input", updateComposerMode);
+
+// ---------------- Emoji picker ----------------
+const EMOJIS = [
+  "😀","😁","😂","🤣","😊","😍","😘","😎","🤩","🥳",
+  "👍","👏","🙏","🙌","💪","🤝","👌","✌️","🤙","👋",
+  "❤️","🧡","💛","💚","💙","💜","🔥","✨","⭐","🎉",
+  "😅","😉","🙂","😇","🤔","😴","😭","😡","😩","😱",
+  "📱","📶","🌍","✈️","🧳","📲","✅","❌","⚠️","❓",
+];
+
+function buildEmojiPanel() {
+  if (!emojiPanel || emojiPanel.dataset.built) return;
+  EMOJIS.forEach((e) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "emoji";
+    b.textContent = e;
+    b.addEventListener("click", () => {
+      input.value += e;
+      input.focus();
+      updateComposerMode();
+    });
+    emojiPanel.appendChild(b);
+  });
+  emojiPanel.dataset.built = "1";
+}
+
+if (emojiBtn) {
+  emojiBtn.addEventListener("click", () => {
+    buildEmojiPanel();
+    emojiPanel.hidden = !emojiPanel.hidden;
+  });
+  document.addEventListener("click", (e) => {
+    if (!emojiPanel || emojiPanel.hidden) return;
+    if (!emojiPanel.contains(e.target) && e.target !== emojiBtn && !emojiBtn.contains(e.target)) {
+      emojiPanel.hidden = true;
+    }
+  });
+}
+
+// ---------------- Attach / upload a screenshot ----------------
+if (attachBtn) attachBtn.addEventListener("click", () => fileInput.click());
+if (fileInput) {
+  fileInput.addEventListener("change", () => {
+    const file = fileInput.files && fileInput.files[0];
+    if (file) sendImage(file);
+    fileInput.value = "";
+  });
+}
+
+function addImageMessage(role, url) {
+  const wrap = document.createElement("div");
+  wrap.className = `msg ${role}`;
+  const img = document.createElement("img");
+  img.className = "qr";
+  img.src = url;
+  img.alt = "image";
+  wrap.appendChild(img);
+  messagesEl.appendChild(wrap);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+  return wrap;
+}
+
+async function sendImage(file) {
+  addImageMessage("user", URL.createObjectURL(file));
+  setBusy(true);
+  const typing = addMessage("assistant", "…");
+  try {
+    const fd = new FormData();
+    fd.append("file", file, file.name || "screenshot.png");
+    fd.append("session_id", sessionId);
+    const res = await fetch("/api/chat/image", { method: "POST", body: fd });
+    const data = await res.json();
+    typing.parentElement.remove();
+    addMessage("assistant", (data && data.reply) || "Thanks, I've received your screenshot.", data && data.media_url);
+  } catch (e) {
+    typing.textContent = "Upload failed. Is the server running?";
+  } finally {
+    setBusy(false);
+    input.focus();
+  }
+}
 
 // ---------------- Voice notes (record -> upload -> transcribe) ----------------
 let mediaRecorder = null;
