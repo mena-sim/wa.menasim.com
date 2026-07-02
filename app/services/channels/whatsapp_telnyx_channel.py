@@ -7,13 +7,16 @@ from sqlalchemy.orm import Session
 
 from app.agent.engine import handle_message
 from app.core.logging import get_logger
-from app.services import runtime_config, transcription
+from app.services import inbound_media
 from app.services.channels.base import InboundMessage
 from app.services.telnyx_client import normalize_e164, send_whatsapp
 
 logger = get_logger(__name__)
 
 WHATSAPP_CHANNEL = "whatsapp"
+
+_AUDIO_EXT = (".ogg", ".opus", ".amr", ".m4a", ".mp3", ".aac", ".webm")
+_IMAGE_EXT = (".jpg", ".jpeg", ".png", ".webp", ".gif")
 
 
 def _phone_from_field(value: Any) -> str:
@@ -40,6 +43,50 @@ def _extract_text(payload: dict[str, Any]) -> str:
     return str(text or "").strip()
 
 
+def _guess_type_from_name(name: str) -> str:
+    lower = (name or "").lower()
+    for ext in _AUDIO_EXT:
+        if lower.endswith(ext):
+            return "audio"
+    for ext in _IMAGE_EXT:
+        if lower.endswith(ext):
+            return "image"
+    if lower.endswith(".pdf") or lower.endswith(".doc") or lower.endswith(".docx"):
+        return "document"
+    if lower.endswith(".mp4") or lower.endswith(".mov"):
+        return "video"
+    return ""
+
+
+def _classify_media(
+    *,
+    media_url: str | None,
+    content_type: str,
+    wm_type: str,
+    filename: str,
+) -> tuple[bool, bool, bool]:
+    """Return (is_audio, is_image, is_unsupported)."""
+    ct = (content_type or "").lower()
+    name_kind = _guess_type_from_name(filename)
+    wmt = (wm_type or "").lower()
+
+    if wmt == "audio" or ct.startswith("audio/") or ct in ("application/ogg",) or name_kind == "audio":
+        return True, False, False
+    if wmt == "image" or ct.startswith("image/") or name_kind == "image":
+        return False, True, False
+    if wmt in ("document", "video", "sticker") or name_kind in ("document", "video"):
+        return False, False, True
+    if media_url and not ct.startswith("image/") and not ct.startswith("audio/"):
+        # Unknown attachment with a URL — only images accepted for non-audio.
+        if name_kind == "image":
+            return False, True, False
+        if name_kind == "audio":
+            return True, False, False
+        if name_kind:
+            return False, False, True
+    return False, False, bool(media_url and not ct.startswith("image/") and not ct.startswith("audio/"))
+
+
 def parse_inbound(body: dict[str, Any]) -> InboundMessage | None:
     """Parse a Telnyx webhook body into a normalized inbound message.
 
@@ -60,19 +107,46 @@ def parse_inbound(body: dict[str, Any]) -> InboundMessage | None:
         return None
 
     text = _extract_text(payload)
-    media = payload.get("media") or []
     media_url = None
     content_type = ""
-    is_image = False
-    is_audio = False
+    filename = ""
+    wm_type = ""
+
+    media = payload.get("media") or []
     if isinstance(media, list) and media:
         first = media[0] or {}
         media_url = first.get("url")
         content_type = str(first.get("content_type") or "")
-        # WhatsApp voice notes arrive as audio/ogg; transcribe them.
-        is_audio = content_type.startswith("audio/")
-        # Any other (non-audio) media is an attachment the agent can't read.
-        is_image = (not is_audio) and bool(media_url)
+        filename = str(first.get("filename") or first.get("name") or "")
+
+    wm = payload.get("whatsapp_message") or {}
+    if isinstance(wm, dict):
+        wm_type = str(wm.get("type") or "")
+        if wm_type == "audio" and isinstance(wm.get("audio"), dict):
+            audio = wm["audio"]
+            media_url = audio.get("link") or media_url
+            filename = filename or str(audio.get("filename") or "")
+            content_type = content_type or "audio/ogg"
+        elif wm_type == "image" and isinstance(wm.get("image"), dict):
+            image = wm["image"]
+            media_url = image.get("link") or media_url
+            filename = filename or str(image.get("filename") or "")
+            content_type = content_type or "image/jpeg"
+        elif wm_type == "document" and isinstance(wm.get("document"), dict):
+            doc = wm["document"]
+            media_url = doc.get("link") or media_url
+            filename = filename or str(doc.get("filename") or "")
+        elif wm_type == "video" and isinstance(wm.get("video"), dict):
+            vid = wm["video"]
+            media_url = vid.get("link") or media_url
+            filename = filename or str(vid.get("filename") or "")
+
+    is_audio, is_image, is_unsupported = _classify_media(
+        media_url=media_url,
+        content_type=content_type,
+        wm_type=wm_type,
+        filename=filename,
+    )
 
     event_id = str(payload.get("id") or data.get("id") or "")
     return InboundMessage(
@@ -82,35 +156,14 @@ def parse_inbound(body: dict[str, Any]) -> InboundMessage | None:
         media_url=media_url,
         is_image=is_image,
         is_audio=is_audio,
+        is_unsupported_media=is_unsupported,
         media_content_type=content_type or None,
         event_id=event_id or None,
     )
 
 
-def _transcribe_media(db: Session, url: str, content_type: str | None) -> str | None:
-    """Download a WhatsApp audio media URL and transcribe it (DeepInfra Whisper)."""
-    if not runtime_config.voice_enabled(db):
-        return None
-    try:
-        with httpx.Client(timeout=60.0, follow_redirects=True) as client:
-            resp = client.get(url)
-            resp.raise_for_status()
-            audio = resp.content
-            ct = content_type or resp.headers.get("content-type") or "audio/ogg"
-        ext = "ogg" if "ogg" in ct else ("mp3" if "mpeg" in ct or "mp3" in ct else "m4a")
-        tr = transcription.transcribe(db, audio, filename=f"voice.{ext}", content_type=ct)
-        return (tr.get("text") or "").strip() or None
-    except (httpx.HTTPError, transcription.TranscriptionError):
-        logger.exception("whatsapp voice transcription failed")
-        return None
-    except Exception:  # never let a media issue crash the webhook
-        logger.exception("unexpected error transcribing whatsapp voice")
-        return None
-
-
 def process_inbound(db: Session, inbound: InboundMessage) -> dict[str, Any]:
     """Run the agent on an inbound WhatsApp message and send the reply back."""
-    # WhatsApp is fully agent-driven; a new customer message re-enables the AI.
     from app.agent.engine import get_or_create_conversation
 
     convo = get_or_create_conversation(db, WHATSAPP_CHANNEL, inbound.sender_id)
@@ -118,22 +171,11 @@ def process_inbound(db: Session, inbound: InboundMessage) -> dict[str, Any]:
         convo.handed_over = False
         db.commit()
 
-    # Voice notes: transcribe to text (auto language) before the agent sees them.
-    if inbound.is_audio and inbound.media_url:
-        transcript = _transcribe_media(db, inbound.media_url, inbound.media_content_type)
-        if transcript:
-            inbound.text = (f"{inbound.text}\n{transcript}".strip() if inbound.text else transcript)
-            inbound.is_image = False
-            inbound.is_audio = False
-            inbound.media_url = None
-        else:
-            # Couldn't transcribe (voice disabled or error): ask them to type. No LLM call.
-            msg = (
-                "🎙️ عذرًا، تعذّر تحويل الرسالة الصوتية إلى نص. من فضلك اكتب سؤالك.\n"
-                "Sorry, I couldn't process that voice note. Please type your question."
-            )
-            send_whatsapp(db, inbound.sender_id, msg)
-            return {"replied": True, "transcribed": False, "escalated": False}
+    prepared = inbound_media.prepare_inbound_media(db, inbound)
+    if isinstance(prepared, str):
+        send_whatsapp(db, inbound.sender_id, prepared)
+        return {"replied": True, "media_rejected": True, "escalated": False}
+    inbound = prepared
 
     result = handle_message(
         db,
@@ -143,7 +185,6 @@ def process_inbound(db: Session, inbound: InboundMessage) -> dict[str, Any]:
         media_url=inbound.media_url,
         is_image=inbound.is_image,
     )
-    # When a human has taken over, the AI stays silent; don't auto-send.
     if result.suppressed or not (result.reply or "").strip():
         return {"replied": False, "suppressed": result.suppressed, "escalated": result.escalated}
     send_result = send_whatsapp(db, inbound.sender_id, result.reply, media_url=result.media_url)

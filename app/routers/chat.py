@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core.logging import get_logger
 from app.schemas.chat import ChatRequest, ChatResponse
-from app.services import runtime_config, transcription
+from app.services import inbound_media, runtime_config, transcription
 from app.services.channels.web_channel import handle_web_message
 
 logger = get_logger(__name__)
@@ -102,8 +102,34 @@ async def chat_image(
     name = f"up_{uuid.uuid4().hex}{ext}"
     (MEDIA_DIR / name).write_bytes(data)
     media_url = f"/media/{name}"
+    from app.services.channels.base import InboundMessage
+
+    inbound = InboundMessage(
+        channel="web",
+        sender_id=session_id or "web-tester",
+        text=(caption or "").strip(),
+        media_url=media_url,
+        is_image=True,
+        media_content_type=file.content_type or "image/jpeg",
+    )
+    prepared = inbound_media.prepare_inbound_media(db, inbound)
+    if isinstance(prepared, str):
+        return {
+            "uploaded_url": media_url,
+            "reply": prepared,
+            "conversation_id": None,
+            "language": "ar" if any("\u0600" <= c <= "\u06ff" for c in (caption or "")) else "en",
+            "media_url": None,
+            "escalated": False,
+            "needs_human": False,
+        }
+    inbound = prepared
     result = handle_web_message(
-        db, session_id=session_id, text=(caption or "").strip(), media_url=media_url, is_image=True
+        db,
+        session_id=session_id,
+        text=inbound.text,
+        media_url=inbound.media_url,
+        is_image=inbound.is_image,
     )
     return {
         "uploaded_url": media_url,

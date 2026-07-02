@@ -439,8 +439,9 @@ export default function Settings({ toast }) {
             <div className="card">
               <h3><Icon name="mic" /> Voice notes (DeepInfra Whisper)</h3>
               <div className="desc">
-                Lets customers send voice notes. Audio is transcribed with Whisper (auto-detects
-                Arabic / English) and answered like a normal message. Install ffmpeg on the server.
+                Voice notes: Whisper transcribes audio (auto language). Screenshots: vision model
+                reads phone settings images. Only images accepted on WhatsApp — not PDF/video/files.
+                Install ffmpeg on the server for some audio formats.
               </div>
               <Field label="DeepInfra API key">
                 <input type="password" placeholder="di-..." value={g.voice.deepinfra_api_key}
@@ -451,14 +452,18 @@ export default function Settings({ toast }) {
                   <input value={g.voice.deepinfra_whisper_model}
                     onChange={(e) => setField("voice", "deepinfra_whisper_model", e.target.value)} />
                 </Field>
-                <Field label="Voice notes enabled" hint="Turn the record button + transcription on/off.">
-                  <select value={g.voice.voice_enabled}
-                    onChange={(e) => setField("voice", "voice_enabled", e.target.value)}>
-                    <option value="true">Enabled</option>
-                    <option value="false">Disabled</option>
-                  </select>
+                <Field label="Vision model (screenshots)">
+                  <input value={g.voice.deepinfra_vision_model}
+                    onChange={(e) => setField("voice", "deepinfra_vision_model", e.target.value)} />
                 </Field>
               </div>
+              <Field label="Voice notes enabled" hint="Turn voice transcription on/off (needs DeepInfra key).">
+                <select value={g.voice.voice_enabled}
+                  onChange={(e) => setField("voice", "voice_enabled", e.target.value)}>
+                  <option value="true">Enabled</option>
+                  <option value="false">Disabled</option>
+                </select>
+              </Field>
               <div className="field-actions">
                 <button className="btn secondary" onClick={() => test("voice")}>Test connection</button>
                 <ConnStatus state={conn.voice || {}} />

@@ -152,8 +152,76 @@ def test_parse_inbound_extracts_whatsapp_text():
     assert inbound.event_id == "msg_1"
 
 
+def test_classify_whatsapp_voice_note():
+    from app.services.channels.whatsapp_telnyx_channel import parse_inbound
+
+    body = {
+        "data": {
+            "event_type": "message.received",
+            "payload": {
+                "id": "voice-1",
+                "from": "+447700900999",
+                "whatsapp_message": {"type": "audio", "audio": {"link": "https://media.telnyx.com/v.ogg"}},
+            },
+        }
+    }
+    inbound = parse_inbound(body)
+    assert inbound is not None
+    assert inbound.is_audio is True
+    assert inbound.is_image is False
+
+
+def test_classify_whatsapp_document_rejected():
+    from app.services.channels.whatsapp_telnyx_channel import parse_inbound
+
+    body = {
+        "data": {
+            "event_type": "message.received",
+            "payload": {
+                "id": "doc-1",
+                "from": "+447700900999",
+                "whatsapp_message": {
+                    "type": "document",
+                    "document": {"link": "https://media.telnyx.com/f.pdf", "filename": "file.pdf"},
+                },
+            },
+        }
+    }
+    inbound = parse_inbound(body)
+    assert inbound is not None
+    assert inbound.is_unsupported_media is True
+
+
+def test_prepare_inbound_media_transcribes_audio(db, monkeypatch):
+    from app.services.channels.base import InboundMessage
+    from app.services import inbound_media
+
+    monkeypatch.setattr("app.services.runtime_config.voice_enabled", lambda _db: True)
+    monkeypatch.setattr(
+        "app.services.inbound_media.fetch_media",
+        lambda _db, url: (b"audio-bytes", "audio/ogg"),
+    )
+    monkeypatch.setattr(
+        "app.services.transcription.transcribe",
+        lambda _db, audio, **kw: {"text": "كيف أركب الشريحة؟", "language": "ar"},
+    )
+    inbound = InboundMessage(
+        channel="whatsapp",
+        sender_id="+1",
+        is_audio=True,
+        media_url="https://media.telnyx.com/v.ogg",
+        media_content_type="audio/ogg",
+    )
+    out = inbound_media.prepare_inbound_media(db, inbound)
+    assert isinstance(out, InboundMessage)
+    assert "الشريحة" in out.text
+    assert out.is_audio is False
+
+
 def test_parse_inbound_accepts_whatsapp_string_from():
     """Telnyx WhatsApp webhooks send `from` as a plain E.164 string."""
+    from app.services.channels.whatsapp_telnyx_channel import parse_inbound
+
     body = {
         "data": {
             "event_type": "message.received",

@@ -60,6 +60,12 @@ SCHEMA: dict[str, tuple[str, bool, str | None, Any]] = {
     # Voice notes (DeepInfra Whisper transcription)
     "deepinfra_api_key": ("voice", True, "deepinfra_api_key", ""),
     "deepinfra_whisper_model": ("voice", False, "deepinfra_whisper_model", "openai/whisper-large-v3"),
+    "deepinfra_vision_model": (
+        "voice",
+        False,
+        "deepinfra_vision_model",
+        "meta-llama/Llama-3.2-11B-Vision-Instruct",
+    ),
     "voice_enabled": ("voice", False, None, "true"),
     # SMTP alerts
     "smtp_host": ("smtp", False, "smtp_host", ""),

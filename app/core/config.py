@@ -51,6 +51,7 @@ class Settings(BaseSettings):
     # Voice notes (DeepInfra Whisper transcription)
     deepinfra_api_key: str = ""
     deepinfra_whisper_model: str = "openai/whisper-large-v3"
+    deepinfra_vision_model: str = "meta-llama/Llama-3.2-11B-Vision-Instruct"
 
     # SMTP escalation alerts
     smtp_host: str = ""

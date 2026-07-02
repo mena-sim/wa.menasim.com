@@ -13,5 +13,6 @@ class InboundMessage:
     media_url: str | None = None
     is_image: bool = False
     is_audio: bool = False  # voice note / audio attachment (transcribe before agent)
+    is_unsupported_media: bool = False  # PDF, document, video — not accepted
     media_content_type: str | None = None
     event_id: str | None = None  # for idempotency (webhook dedupe)
