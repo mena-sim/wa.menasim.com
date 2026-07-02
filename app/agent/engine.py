@@ -5,7 +5,7 @@ import time
 from collections import defaultdict, deque
 from dataclasses import dataclass
 
-from sqlalchemy import select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from app.agent import llm
@@ -20,6 +20,7 @@ logger = get_logger(__name__)
 
 _HISTORY_LIMIT = 12  # prior turns fed to the model
 _rate_state: dict[str, deque[float]] = defaultdict(deque)
+SESSION_RESET_KEYWORD = "menasim"
 
 
 @dataclass
@@ -38,6 +39,75 @@ def detect_language(text: str) -> str:
         if "\u0600" <= ch <= "\u06ff":  # Arabic block
             return "ar"
     return "en"
+
+
+def is_session_reset_command(text: str) -> bool:
+    """Typing 'menasim' alone restarts the WhatsApp/chat session."""
+    return (text or "").strip().casefold() == SESSION_RESET_KEYWORD
+
+
+def customer_stated_need(text: str) -> bool:
+    """True when the customer already said what they want (not just hi/hello)."""
+    t = (text or "").strip().casefold()
+    if not t:
+        return False
+    needles = (
+        "install",
+        "setup",
+        "activate",
+        "activation",
+        "qr",
+        "esim",
+        "iccid",
+        "internet",
+        "network",
+        "roaming",
+        "operator",
+        "balance",
+        "data left",
+        "refund",
+        "cancel",
+        "order",
+        "expired",
+        "not work",
+        "doesn't work",
+        "doesnt work",
+        "problem",
+        "issue",
+        "help me",
+        "تركيب",
+        "ركب",
+        "شريحة",
+        "تفعيل",
+        "شبكة",
+        "انترنت",
+        "إنترنت",
+        "رصيد",
+        "باقي",
+        "استرجاع",
+        "طلب",
+        "ما اشتغل",
+        "لا يعمل",
+        "مشكلة",
+        "مساعدة",
+    )
+    return any(n in t for n in needles)
+
+
+def welcome_message(language: str) -> str:
+    if language == "ar":
+        return "أهلاً! كيف أقدر أساعدك؟"
+    return "Hi! How can I help you?"
+
+
+def clear_conversation_session(db: Session, convo: Conversation) -> None:
+    """Delete chat history and reset flags — fresh session for same customer."""
+    db.execute(delete(Message).where(Message.conversation_id == convo.id))
+    convo.verified = False
+    convo.verified_order = ""
+    convo.handed_over = False
+    convo.needs_human = False
+    db.commit()
 
 
 def _rate_limited(db: Session, sender_id: str) -> bool:
@@ -111,16 +181,45 @@ def handle_message(
     language = detect_language(text) if text else convo.language or "en"
     convo.language = language
 
-    # Persist the inbound user message.
     user_content = text or ""
     if is_image and not user_content:
         user_content = "[image]"
+
+    if is_session_reset_command(user_content):
+        clear_conversation_session(db, convo)
+        reply = welcome_message(language)
+        db.add(
+            Message(
+                conversation_id=convo.id, role="user", content=user_content, media_url=media_url
+            )
+        )
+        db.add(Message(conversation_id=convo.id, role="assistant", content=reply))
+        db.commit()
+        return AgentResult(reply=reply, conversation_id=convo.id, language=language)
+
+    is_first_user_message = (
+        db.execute(
+            select(func.count())
+            .select_from(Message)
+            .where(Message.conversation_id == convo.id, Message.role == "user")
+        ).scalar_one()
+        or 0
+    ) == 0
+
+    # Persist the inbound user message.
     db.add(
         Message(
             conversation_id=convo.id, role="user", content=user_content, media_url=media_url
         )
     )
     db.commit()
+
+    # First message with no stated problem → welcome only. Do not ask device type yet.
+    if is_first_user_message and not customer_stated_need(user_content) and not is_image:
+        reply = welcome_message(language)
+        db.add(Message(conversation_id=convo.id, role="assistant", content=reply))
+        db.commit()
+        return AgentResult(reply=reply, conversation_id=convo.id, language=language)
 
     # Human handover: agent stays silent so a human can reply from the console.
     if convo.handed_over:

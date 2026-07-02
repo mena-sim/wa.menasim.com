@@ -74,10 +74,49 @@ def test_chunk_markdown_splits_on_headings():
 
 def test_engine_without_llm_returns_message(db):
     result = engine.handle_message(
-        db, channel="web", sender_id="tester", text="hello"
+        db, channel="web", sender_id="tester", text="I need help installing my eSIM"
     )
     assert result.conversation_id > 0
     assert "not configured" in result.reply.lower() or "DEEPSEEK" in result.reply
+
+
+def test_first_message_welcome_only(db, monkeypatch):
+    monkeypatch.setattr(
+        "app.services.runtime_config.llm_enabled",
+        lambda _db: True,
+    )
+
+    def _fake_chat(*_args, **_kwargs):
+        raise AssertionError("LLM should not be called for vague first message")
+
+    monkeypatch.setattr("app.agent.llm.chat", _fake_chat)
+
+    result = engine.handle_message(db, channel="whatsapp", sender_id="+447700900001", text="مرحباً")
+    assert "كيف أقدر أساعدك" in result.reply
+    assert "iphone" not in result.reply.lower()
+    assert "android" not in result.reply.lower()
+
+
+def test_session_reset_on_menasim_keyword(db, monkeypatch):
+    monkeypatch.setattr("app.services.runtime_config.llm_enabled", lambda _db: True)
+    monkeypatch.setattr(
+        "app.agent.llm.chat",
+        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("no llm on reset")),
+    )
+
+    engine.handle_message(db, channel="whatsapp", sender_id="+447700900002", text="hello there")
+    result = engine.handle_message(db, channel="whatsapp", sender_id="+447700900002", text="menasim")
+    assert result.reply in ("Hi! How can I help you?", "أهلاً! كيف أقدر أساعدك؟")
+
+    from sqlalchemy import select
+    from app.models.message import Message
+
+    msgs = db.execute(
+        select(Message).where(Message.conversation_id == result.conversation_id)
+    ).scalars().all()
+    assert len(msgs) == 2
+    assert msgs[0].content == "menasim"
+    assert msgs[1].role == "assistant"
 
 
 def test_escalate_tool_creates_ticket(db):
