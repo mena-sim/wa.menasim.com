@@ -118,3 +118,24 @@ def test_whatsapp_payload_uses_telnyx_schema():
         "type": "image",
         "image": {"link": "https://example.com/qr.png", "caption": "caption"},
     }
+
+
+def test_whatsapp_inbound_agent_pipeline(db):
+    from app.services import telnyx_diagnostics
+
+    result = telnyx_diagnostics.test_inbound(
+        db, from_number="+447700900999", text="How do I install my eSIM?", send_reply=False
+    )
+    assert result["ok"] is True
+    assert result["channel"] == "whatsapp"
+    assert result["conversation_id"] > 0
+    assert result["reply"]
+
+
+def test_whatsapp_status_flags_business_id_as_profile(db):
+    from app.services import runtime_config, telnyx_diagnostics
+
+    runtime_config.set_value(db, "telnyx_messaging_profile_id", "1339285631627922")
+    db.commit()
+    st = telnyx_diagnostics.status(db)
+    assert any("Business account ID" in w for w in st["warnings"])

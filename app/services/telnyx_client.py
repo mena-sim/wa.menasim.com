@@ -111,9 +111,14 @@ def send_whatsapp(
                 TELNYX_WHATSAPP_MESSAGES_URL, json=payload, headers=_headers(api_key)
             )
             ok = resp.status_code < 300
+            detail = ""
+            try:
+                detail = resp.text[:500]
+            except Exception:  # pragma: no cover
+                pass
             if not ok:
-                logger.warning("[telnyx] send failed %s: %s", resp.status_code, resp.text[:400])
-            return {"ok": ok, "status": resp.status_code}
+                logger.warning("[telnyx] send failed %s: %s", resp.status_code, detail)
+            return {"ok": ok, "status": resp.status_code, "detail": detail}
     except httpx.HTTPError as exc:
         logger.warning("[telnyx] send error: %s", exc)
         return {"ok": False, "error": str(exc)}

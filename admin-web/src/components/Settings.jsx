@@ -56,6 +56,9 @@ export default function Settings({ toast }) {
   const [status, setStatus] = useState({});
   const [conn, setConn] = useState({});
   const [saving, setSaving] = useState("");
+  const [waStatus, setWaStatus] = useState(null);
+  const [testPhone, setTestPhone] = useState("");
+  const [waBusy, setWaBusy] = useState("");
 
   async function load() {
     try {
@@ -67,10 +70,24 @@ export default function Settings({ toast }) {
     }
   }
 
+  async function loadWhatsappStatus() {
+    try {
+      const data = await api.getWhatsappStatus();
+      setWaStatus(data);
+    } catch (e) {
+      toast(e.message, true);
+    }
+  }
+
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (tab === "whatsapp" || tab === "telnyx") loadWhatsappStatus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
 
   function setField(group, key, value) {
     setGroups((g) => ({ ...g, [group]: { ...g[group], [key]: value } }));
@@ -93,9 +110,48 @@ export default function Settings({ toast }) {
     setConn((c) => ({ ...c, [group]: { status: "testing" } }));
     try {
       const res = await api.testConfig(group);
-      setConn((c) => ({ ...c, [group]: { status: res.ok ? "ok" : "fail", msg: res.message } }));
+      const extra = [res.message, ...(res.warnings || []), ...(res.details || [])].filter(Boolean).join(" · ");
+      setConn((c) => ({
+        ...c,
+        [group]: { status: res.ok ? "ok" : "fail", msg: extra || res.message },
+      }));
+      if (group === "whatsapp") await loadWhatsappStatus();
     } catch (e) {
       setConn((c) => ({ ...c, [group]: { status: "fail", msg: e.message } }));
+    }
+  }
+
+  async function runWhatsappTest(kind) {
+    const phone = (testPhone || groups?.whatsapp?.telnyx_whatsapp_from || "").trim();
+    if (!phone && kind !== "connect") {
+      toast("Enter a test phone number (your mobile).", true);
+      return;
+    }
+    setWaBusy(kind);
+    try {
+      let res;
+      if (kind === "connect") {
+        res = await api.testConfig("whatsapp");
+        const extra = [res.message, ...(res.warnings || []), ...(res.details || [])].filter(Boolean).join(" · ");
+        setConn((c) => ({ ...c, whatsapp: { status: res.ok ? "ok" : "fail", msg: extra || res.message } }));
+      } else if (kind === "inbound") {
+        res = await api.testWhatsappInbound(phone, "Hello, I need help with my eSIM.", false);
+        toast(res.ok ? `Agent replied (conversation #${res.conversation_id})` : res.message, !res.ok);
+      } else if (kind === "send") {
+        res = await api.testWhatsappSend(
+          phone,
+          "Test from menasim WA support. If you see this, outbound WhatsApp is working."
+        );
+        toast(res.message, !res.ok);
+      } else if (kind === "full") {
+        res = await api.testWhatsappInbound(phone, "Hello, I need help with my eSIM.", true);
+        toast(res.message, !res.ok);
+      }
+      await loadWhatsappStatus();
+    } catch (e) {
+      toast(e.message, true);
+    } finally {
+      setWaBusy("");
     }
   }
 
@@ -182,7 +238,7 @@ export default function Settings({ toast }) {
                   onChange={(e) => setField("telnyx", "telnyx_api_key", e.target.value)} />
               </Field>
               <div className="row2col">
-                <Field label="Messaging profile ID">
+                <Field label="Messaging profile ID" hint="Telnyx UUID (e.g. 4001c123-...). Not the WhatsApp Business account ID.">
                   <input placeholder="4001c123-..." value={g.telnyx.telnyx_messaging_profile_id}
                     onChange={(e) => setField("telnyx", "telnyx_messaging_profile_id", e.target.value)} />
                 </Field>
@@ -191,8 +247,8 @@ export default function Settings({ toast }) {
                     onChange={(e) => setField("telnyx", "telnyx_webhook_public_key", e.target.value)} />
                 </Field>
               </div>
-              <Field label="Webhook URL (configure this in the Telnyx portal)" hint="Point your Telnyx messaging profile webhook here.">
-                <input readOnly value={`${window.location.origin.replace(':5174', ':8080')}/telnyx/webhooks/messages`} />
+              <Field label="Webhook URL (configure this in the Telnyx portal)" hint="Must point to wa.menasim.com — Telnyx sends inbound WhatsApp messages here.">
+                <input readOnly value={status.webhook_url || "https://wa.menasim.com/telnyx/webhooks/messages"} />
               </Field>
               <div className="field-actions">
                 <button className="btn secondary" onClick={() => test("telnyx")}>Test connection</button>
@@ -207,10 +263,12 @@ export default function Settings({ toast }) {
           {tab === "whatsapp" && (
             <div className="card">
               <h3><Icon name="whatsapp" /> WhatsApp number</h3>
-              <div className="desc">The WhatsApp Business number your customers message for support (Telnyx WhatsApp sender).</div>
+              <div className="desc">
+                Customers message this number on WhatsApp. Inbound messages are routed through the same AI agent as the web chat tester.
+              </div>
               <div className="row2col">
-                <Field label="Sender (from) number" hint="E.164 format, e.g. +447500123456">
-                  <input placeholder="+44 7500 123456" value={g.whatsapp.telnyx_whatsapp_from}
+                <Field label="Sender (from) number" hint="E.164 format, e.g. +447822002099">
+                  <input placeholder="+447822002099" value={g.whatsapp.telnyx_whatsapp_from}
                     onChange={(e) => setField("whatsapp", "telnyx_whatsapp_from", e.target.value)} />
                 </Field>
                 <Field label="Display name">
@@ -218,12 +276,35 @@ export default function Settings({ toast }) {
                     onChange={(e) => setField("whatsapp", "whatsapp_display_name", e.target.value)} />
                 </Field>
               </div>
-              <Field label="Business account ID">
-                <input placeholder="1029384756102938" value={g.whatsapp.whatsapp_business_id}
+              <Field label="Business account ID" hint="Meta / WhatsApp Business account ID (reference only — not used for sending).">
+                <input placeholder="1339285631627922" value={g.whatsapp.whatsapp_business_id}
                   onChange={(e) => setField("whatsapp", "whatsapp_business_id", e.target.value)} />
               </Field>
-              <div className="field-actions">
-                <button className="btn secondary" onClick={() => test("whatsapp")}>Test Telnyx</button>
+              {waStatus && (
+                <div className="hint" style={{ marginBottom: 12 }}>
+                  Webhook: {waStatus.webhook_url} · WA conversations: {waStatus.whatsapp_conversations} ·
+                  processed events: {waStatus.processed_webhook_events}
+                  {(waStatus.warnings || []).map((w) => (
+                    <div key={w} style={{ color: "var(--warn, #b45309)", marginTop: 6 }}>⚠ {w}</div>
+                  ))}
+                </div>
+              )}
+              <Field label="Test phone number" hint="Your mobile number to receive test messages and simulate inbound chats.">
+                <input placeholder="+447..." value={testPhone} onChange={(e) => setTestPhone(e.target.value)} />
+              </Field>
+              <div className="field-actions" style={{ flexWrap: "wrap", gap: 8 }}>
+                <button className="btn secondary" disabled={!!waBusy} onClick={() => runWhatsappTest("connect")}>
+                  {waBusy === "connect" ? "Testing…" : "Test connectivity"}
+                </button>
+                <button className="btn secondary" disabled={!!waBusy} onClick={() => runWhatsappTest("inbound")}>
+                  {waBusy === "inbound" ? "Running…" : "Test agent (WA channel)"}
+                </button>
+                <button className="btn secondary" disabled={!!waBusy} onClick={() => runWhatsappTest("send")}>
+                  {waBusy === "send" ? "Sending…" : "Send test message"}
+                </button>
+                <button className="btn secondary" disabled={!!waBusy} onClick={() => runWhatsappTest("full")}>
+                  {waBusy === "full" ? "Running…" : "Test full round-trip"}
+                </button>
                 <ConnStatus state={conn.whatsapp || {}} />
                 <button className="btn primary" disabled={saving === "whatsapp"} onClick={() => save("whatsapp")}>
                   {saving === "whatsapp" ? "Saving…" : "Save changes"}

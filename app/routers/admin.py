@@ -18,7 +18,9 @@ from app.services import runtime_config
 from app.services.kb import distill, docs, ingest, store
 from app.services.kb.docs import KbDocError
 from app.services.providers.woocommerce import WooCommerceClient
+from app.core.config import get_settings
 from app.services.telnyx_client import send_whatsapp
+from app.services import telnyx_diagnostics
 
 logger = get_logger(__name__)
 
@@ -61,6 +63,8 @@ def get_config(db: Session = Depends(get_db), _: str = Depends(admin_auth.requir
             "whatsapp_enabled": runtime_config.whatsapp_enabled(db),
             "woocommerce_enabled": runtime_config.woocommerce_enabled(db),
             "smtp_enabled": runtime_config.smtp_enabled(db),
+            "webhook_url": telnyx_diagnostics.webhook_url(),
+            "public_base_url": get_settings().public_base_url,
         },
     }
 
@@ -90,8 +94,10 @@ def test_config(
 ) -> dict:
     if group in ("deepseek",):
         return _test_deepseek(db)
-    if group in ("telnyx", "whatsapp"):
+    if group in ("telnyx",):
         return _test_telnyx(db)
+    if group in ("whatsapp",):
+        return telnyx_diagnostics.test_connection(db)
     if group == "wordpress":
         ok, msg = WooCommerceClient(db).test_connection()
         return {"ok": ok, "message": msg}
@@ -156,6 +162,49 @@ def _test_telnyx(db: Session) -> dict:
         return {"ok": False, "message": f"Connection error: {exc}"}
 
 
+class WhatsAppTestSendIn(BaseModel):
+    to: str
+    text: str = (
+        "Test from menasim WA support. If you see this, outbound WhatsApp via Telnyx is working."
+    )
+
+
+class WhatsAppTestInboundIn(BaseModel):
+    from_number: str
+    text: str = "Hello, I need help with my eSIM."
+    send_reply: bool = False
+
+
+@router.get("/whatsapp/status")
+def whatsapp_status(
+    db: Session = Depends(get_db), _: str = Depends(admin_auth.require_admin)
+) -> dict:
+    return telnyx_diagnostics.status(db)
+
+
+@router.post("/whatsapp/test-send")
+def whatsapp_test_send(
+    payload: WhatsAppTestSendIn,
+    db: Session = Depends(get_db),
+    _: str = Depends(admin_auth.require_admin),
+) -> dict:
+    return telnyx_diagnostics.test_send(db, payload.to, payload.text)
+
+
+@router.post("/whatsapp/test-inbound")
+def whatsapp_test_inbound(
+    payload: WhatsAppTestInboundIn,
+    db: Session = Depends(get_db),
+    _: str = Depends(admin_auth.require_admin),
+) -> dict:
+    return telnyx_diagnostics.test_inbound(
+        db,
+        from_number=payload.from_number,
+        text=payload.text,
+        send_reply=payload.send_reply,
+    )
+
+
 # ---------------------------------------------------------------- conversations
 def _status_of(convo: Conversation) -> str:
     if convo.closed:
@@ -170,6 +219,7 @@ def _status_of(convo: Conversation) -> str:
 @router.get("/conversations")
 def list_conversations(
     filter: str = "all",
+    channel: str = "all",
     q: str = "",
     db: Session = Depends(get_db),
     _: str = Depends(admin_auth.require_admin),
@@ -183,6 +233,8 @@ def list_conversations(
     for c in rows:
         status = _status_of(c)
         if filter and filter != "all" and status != filter:
+            continue
+        if channel and channel != "all" and c.channel != channel:
             continue
         last = db.execute(
             select(Message)

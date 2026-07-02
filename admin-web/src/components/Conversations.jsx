@@ -10,6 +10,12 @@ const FILTERS = [
   { key: "closed", label: "Closed" },
 ];
 
+const CHANNELS = [
+  { key: "whatsapp", label: "WhatsApp" },
+  { key: "web", label: "Web" },
+  { key: "all", label: "All channels" },
+];
+
 function initials(s) {
   const digits = (s || "").replace(/[^0-9]/g, "");
   return digits.slice(-2) || (s || "?").slice(0, 2).toUpperCase();
@@ -32,6 +38,7 @@ function fmtTime(iso) {
 export default function Conversations({ toast }) {
   const [list, setList] = useState([]);
   const [filter, setFilter] = useState("all");
+  const [channel, setChannel] = useState("whatsapp");
   const [q, setQ] = useState("");
   const [selectedId, setSelectedId] = useState(null);
   const [convo, setConvo] = useState(null);
@@ -41,7 +48,7 @@ export default function Conversations({ toast }) {
 
   async function loadList() {
     try {
-      const data = await api.listConversations(filter, q);
+      const data = await api.listConversations(filter, q, channel);
       setList(data.conversations);
     } catch (e) {
       /* polling errors are silent */
@@ -63,7 +70,7 @@ export default function Conversations({ toast }) {
     const t = setInterval(loadList, 5000);
     return () => clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filter, q]);
+  }, [filter, q, channel]);
 
   useEffect(() => {
     if (!selectedId) return;
@@ -157,6 +164,17 @@ export default function Conversations({ toast }) {
           </div>
         </div>
         <div className="filters">
+          {CHANNELS.map((f) => (
+            <div
+              key={f.key}
+              className={`chip ${channel === f.key ? "active" : ""}`}
+              onClick={() => setChannel(f.key)}
+            >
+              {f.label}
+            </div>
+          ))}
+        </div>
+        <div className="filters">
           {FILTERS.map((f) => (
             <div
               key={f.key}
@@ -169,7 +187,11 @@ export default function Conversations({ toast }) {
         </div>
         <div className="session-list">
           {list.length === 0 && (
-            <div className="empty-note">No conversations yet. Messages from the web widget or WhatsApp will appear here.</div>
+            <div className="empty-note">
+              {channel === "whatsapp"
+                ? "No WhatsApp conversations yet. Send a message to your business number, or use Settings → WhatsApp → Test agent."
+                : "No conversations yet. Messages from the web widget or WhatsApp will appear here."}
+            </div>
           )}
           {list.map((s) => (
             <div
@@ -180,10 +202,14 @@ export default function Conversations({ toast }) {
               <div className="avatar">{initials(s.name)}</div>
               <div className="session-meta">
                 <div className="row1">
-                  <span>{s.name}</span>
+                  <span>{s.channel === "whatsapp" ? s.sender_id : s.name}</span>
                   <span className={`badge ${badgeClass(s.status)}`}>{statusLabel(s.status)}</span>
                 </div>
                 <div className="row2">{s.last || "…"}</div>
+                <div className="row2" style={{ opacity: 0.7, fontSize: "0.85em" }}>
+                  {s.channel === "whatsapp" ? "WhatsApp" : "Web"}
+                  {s.channel === "whatsapp" && s.name !== s.sender_id ? ` · ${s.name}` : ""}
+                </div>
                 {s.handed_over && (
                   <span className="handoff-flag">
                     <Icon name="handoff" /> Human replying

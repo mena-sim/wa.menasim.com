@@ -47,8 +47,16 @@ export const api = {
   saveConfig: (group, values) => request("PUT", `/admin/config/${group}`, { values }),
   testConfig: (group) => request("POST", `/admin/config/test/${group}`),
 
-  listConversations: (filter = "all", q = "") =>
-    request("GET", `/admin/conversations?filter=${encodeURIComponent(filter)}&q=${encodeURIComponent(q)}`),
+  getWhatsappStatus: () => request("GET", "/admin/whatsapp/status"),
+  testWhatsappSend: (to, text) => request("POST", "/admin/whatsapp/test-send", { to, text }),
+  testWhatsappInbound: (from_number, text, send_reply = false) =>
+    request("POST", "/admin/whatsapp/test-inbound", { from_number, text, send_reply }),
+
+  listConversations: (filter = "all", q = "", channel = "all") =>
+    request(
+      "GET",
+      `/admin/conversations?filter=${encodeURIComponent(filter)}&channel=${encodeURIComponent(channel)}&q=${encodeURIComponent(q)}`
+    ),
   getConversation: (id) => request("GET", `/admin/conversations/${id}`),
   setHandover: (id, handed_over) =>
     request("POST", `/admin/conversations/${id}/handover`, { handed_over }),
