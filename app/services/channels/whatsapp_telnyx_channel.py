@@ -12,7 +12,8 @@ from app.agent.engine import handle_message
 from app.core.logging import get_logger
 from app.services import inbound_media
 from app.services.channels.base import InboundMessage
-from app.services.telnyx_client import normalize_e164, send_whatsapp
+from app.services.telnyx_client import normalize_e164
+from app.services.whatsapp import send_message as send_whatsapp
 
 logger = get_logger(__name__)
 

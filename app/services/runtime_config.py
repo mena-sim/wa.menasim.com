@@ -23,9 +23,21 @@ SCHEMA: dict[str, tuple[str, bool, str | None, Any]] = {
     "telnyx_messaging_profile_id": ("telnyx", False, "telnyx_messaging_profile_id", ""),
     "telnyx_webhook_public_key": ("telnyx", True, "telnyx_webhook_public_key", ""),
     # WhatsApp
+    "whatsapp_provider": ("whatsapp", False, "whatsapp_provider", "telnyx"),
     "telnyx_whatsapp_from": ("whatsapp", False, "telnyx_whatsapp_from", ""),
     "whatsapp_display_name": ("whatsapp", False, None, "eSIM Support"),
     "whatsapp_business_id": ("whatsapp", False, None, ""),
+    # Twilio WhatsApp
+    "twilio_account_sid": ("twilio", False, "twilio_account_sid", ""),
+    "twilio_auth_token": ("twilio", True, "twilio_auth_token", ""),
+    "twilio_whatsapp_from": ("twilio", False, "twilio_whatsapp_from", ""),
+    # Meta WhatsApp Cloud API (direct)
+    "meta_whatsapp_token": ("meta", True, "meta_whatsapp_token", ""),
+    "meta_phone_number_id": ("meta", False, "meta_phone_number_id", ""),
+    "meta_whatsapp_from": ("meta", False, "meta_whatsapp_from", ""),
+    "meta_app_secret": ("meta", True, "meta_app_secret", ""),
+    "meta_verify_token": ("meta", False, "meta_verify_token", ""),
+    "meta_waba_id": ("meta", False, "meta_waba_id", ""),
     # WordPress / WooCommerce
     "wc_base_url": ("wordpress", False, "wc_base_url", ""),
     "wc_consumer_key": ("wordpress", True, "wc_consumer_key", ""),
@@ -179,7 +191,30 @@ def llm_enabled(db: Session) -> bool:
     return bool(get(db, "deepseek_api_key"))
 
 
+def whatsapp_provider(db: Session) -> str:
+    value = (get(db, "whatsapp_provider") or "telnyx").strip().lower()
+    return value if value in ("telnyx", "twilio", "meta") else "telnyx"
+
+
+def whatsapp_from_number(db: Session) -> str:
+    provider = whatsapp_provider(db)
+    if provider == "twilio":
+        return get(db, "twilio_whatsapp_from")
+    if provider == "meta":
+        return get(db, "meta_whatsapp_from") or get(db, "telnyx_whatsapp_from")
+    return get(db, "telnyx_whatsapp_from")
+
+
 def whatsapp_enabled(db: Session) -> bool:
+    provider = whatsapp_provider(db)
+    if provider == "twilio":
+        return bool(
+            get(db, "twilio_account_sid")
+            and get(db, "twilio_auth_token")
+            and get(db, "twilio_whatsapp_from")
+        )
+    if provider == "meta":
+        return bool(get(db, "meta_whatsapp_token") and get(db, "meta_phone_number_id"))
     return bool(get(db, "telnyx_api_key") and get(db, "telnyx_whatsapp_from"))
 
 

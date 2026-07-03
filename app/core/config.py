@@ -48,6 +48,22 @@ class Settings(BaseSettings):
     telnyx_messaging_profile_id: str = ""
     telnyx_webhook_public_key: str = ""
 
+    # WhatsApp provider selection
+    whatsapp_provider: str = "telnyx"
+
+    # Twilio WhatsApp
+    twilio_account_sid: str = ""
+    twilio_auth_token: str = ""
+    twilio_whatsapp_from: str = ""
+
+    # Meta WhatsApp Cloud API
+    meta_whatsapp_token: str = ""
+    meta_phone_number_id: str = ""
+    meta_whatsapp_from: str = ""
+    meta_app_secret: str = ""
+    meta_verify_token: str = ""
+    meta_waba_id: str = ""
+
     # Voice notes (DeepInfra Whisper transcription)
     deepinfra_api_key: str = ""
     deepinfra_whisper_model: str = "openai/whisper-large-v3"

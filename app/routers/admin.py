@@ -19,14 +19,15 @@ from app.services.kb import distill, docs, ingest, store
 from app.services.kb.docs import KbDocError
 from app.services.providers.woocommerce import WooCommerceClient
 from app.core.config import get_settings
-from app.services.telnyx_client import send_whatsapp
+from app.services.whatsapp import diagnostics as whatsapp_diagnostics, send_message as send_whatsapp
+from app.services.whatsapp.providers import active_webhook_url, webhook_urls
 from app.services import telnyx_diagnostics
 
 logger = get_logger(__name__)
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
-CONFIG_GROUPS = ("deepseek", "telnyx", "whatsapp", "wordpress", "agent", "voice", "smtp")
+CONFIG_GROUPS = ("deepseek", "telnyx", "twilio", "meta", "whatsapp", "wordpress", "agent", "voice", "smtp")
 
 
 # ---------------------------------------------------------------- auth
@@ -61,9 +62,11 @@ def get_config(db: Session = Depends(get_db), _: str = Depends(admin_auth.requir
         "status": {
             "llm_enabled": runtime_config.llm_enabled(db),
             "whatsapp_enabled": runtime_config.whatsapp_enabled(db),
+            "whatsapp_provider": runtime_config.whatsapp_provider(db),
             "woocommerce_enabled": runtime_config.woocommerce_enabled(db),
             "smtp_enabled": runtime_config.smtp_enabled(db),
-            "webhook_url": telnyx_diagnostics.webhook_url(),
+            "webhook_url": active_webhook_url(db),
+            "webhook_urls": webhook_urls(),
             "public_base_url": get_settings().public_base_url,
         },
     }
@@ -96,8 +99,16 @@ def test_config(
         return _test_deepseek(db)
     if group in ("telnyx",):
         return _test_telnyx(db)
+    if group in ("twilio",):
+        from app.services.whatsapp.twilio_provider import test_connection
+
+        return test_connection(db)
+    if group in ("meta",):
+        from app.services.whatsapp.meta_provider import test_connection
+
+        return test_connection(db)
     if group in ("whatsapp",):
-        return telnyx_diagnostics.test_connection(db)
+        return whatsapp_diagnostics.test_connection(db)
     if group == "wordpress":
         ok, msg = WooCommerceClient(db).test_connection()
         return {"ok": ok, "message": msg}
@@ -207,7 +218,7 @@ def whatsapp_auto_configure(
 def whatsapp_status(
     db: Session = Depends(get_db), _: str = Depends(admin_auth.require_admin)
 ) -> dict:
-    return telnyx_diagnostics.status(db)
+    return whatsapp_diagnostics.status(db)
 
 
 @router.post("/whatsapp/test-send")
@@ -216,7 +227,7 @@ def whatsapp_test_send(
     db: Session = Depends(get_db),
     _: str = Depends(admin_auth.require_admin),
 ) -> dict:
-    return telnyx_diagnostics.test_send(db, payload.to, payload.text)
+    return whatsapp_diagnostics.test_send(db, payload.to, payload.text)
 
 
 @router.post("/whatsapp/test-inbound")
@@ -225,7 +236,7 @@ def whatsapp_test_inbound(
     db: Session = Depends(get_db),
     _: str = Depends(admin_auth.require_admin),
 ) -> dict:
-    return telnyx_diagnostics.test_inbound(
+    return whatsapp_diagnostics.test_inbound(
         db,
         from_number=payload.from_number,
         text=payload.text,

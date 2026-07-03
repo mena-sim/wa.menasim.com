@@ -27,8 +27,10 @@ from app.routers import (
     health,
     inbox,
     kb,
+    meta_webhook,
     settings as settings_router,
     telnyx_webhook,
+    twilio_webhook,
 )
 from app.services.kb import ingest
 
@@ -80,6 +82,8 @@ app.include_router(settings_router.router)
 app.include_router(inbox.router)
 app.include_router(admin.router)
 app.include_router(telnyx_webhook.router)
+app.include_router(twilio_webhook.router)
+app.include_router(meta_webhook.router)
 
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 os.makedirs(MEDIA_DIR, exist_ok=True)

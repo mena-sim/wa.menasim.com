@@ -4,12 +4,20 @@ import { api } from "../api.js";
 
 const TABS = [
   { key: "deepseek", label: "DeepSeek LLM", icon: "brain" },
-  { key: "telnyx", label: "Telnyx", icon: "telnyx" },
   { key: "whatsapp", label: "WhatsApp", icon: "whatsapp" },
+  { key: "telnyx", label: "Telnyx", icon: "telnyx" },
+  { key: "twilio", label: "Twilio", icon: "telnyx" },
+  { key: "meta", label: "Meta (direct)", icon: "brain" },
   { key: "wordpress", label: "WordPress API", icon: "wordpress" },
   { key: "agent", label: "Agent & KB", icon: "book" },
   { key: "voice", label: "Voice notes", icon: "mic" },
   { key: "smtp", label: "Email Alerts", icon: "mail" },
+];
+
+const WA_PROVIDERS = [
+  { value: "telnyx", label: "Telnyx" },
+  { value: "twilio", label: "Twilio" },
+  { value: "meta", label: "Meta Cloud API (direct)" },
 ];
 
 const BUILTIN_SKILLS = [
@@ -87,7 +95,7 @@ export default function Settings({ toast }) {
   }, []);
 
   useEffect(() => {
-    if (tab === "whatsapp" || tab === "telnyx") loadWhatsappStatus();
+    if (["whatsapp", "telnyx", "twilio", "meta"].includes(tab)) loadWhatsappStatus();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab]);
 
@@ -173,7 +181,14 @@ export default function Settings({ toast }) {
   }
 
   async function runWhatsappTest(kind) {
-    const phone = (testPhone || groups?.whatsapp?.telnyx_whatsapp_from || "").trim();
+    const provider = groups?.whatsapp?.whatsapp_provider || status.whatsapp_provider || "telnyx";
+    const fromNumber =
+      provider === "twilio"
+        ? groups?.twilio?.twilio_whatsapp_from
+        : provider === "meta"
+          ? groups?.meta?.meta_whatsapp_from || groups?.whatsapp?.telnyx_whatsapp_from
+          : groups?.whatsapp?.telnyx_whatsapp_from;
+    const phone = (testPhone || fromNumber || "").trim();
     if (!phone && kind !== "connect") {
       toast("Enter a test phone number (your mobile).", true);
       return;
@@ -220,6 +235,9 @@ export default function Settings({ toast }) {
   }
 
   const g = groups;
+  const activeProvider = g.whatsapp?.whatsapp_provider || status.whatsapp_provider || "telnyx";
+  const webhookUrls = status.webhook_urls || {};
+  const activeWebhook = webhookUrls[activeProvider] || status.webhook_url || "";
 
   return (
     <div className="main">
@@ -304,8 +322,8 @@ export default function Settings({ toast }) {
                 <input type="password" placeholder="base64 public key" value={g.telnyx.telnyx_webhook_public_key}
                   onChange={(e) => setField("telnyx", "telnyx_webhook_public_key", e.target.value)} />
               </Field>
-              <Field label="Webhook URL (configure this in the Telnyx portal)" hint="Must point to wa.menasim.com — Telnyx sends inbound WhatsApp messages here.">
-                <input readOnly value={status.webhook_url || "https://wa.menasim.com/telnyx/webhooks/messages"} />
+              <Field label="Webhook URL (configure this in the Telnyx portal)" hint="Used when WhatsApp provider is Telnyx.">
+                <input readOnly value={webhookUrls.telnyx || status.webhook_url || "https://wa.menasim.com/telnyx/webhooks/messages"} />
               </Field>
               <div className="field-actions">
                 <button className="btn secondary" onClick={() => test("telnyx")}>Test connection</button>
@@ -319,79 +337,73 @@ export default function Settings({ toast }) {
 
           {tab === "whatsapp" && (
             <div className="card">
-              <h3><Icon name="whatsapp" /> WhatsApp number</h3>
+              <h3><Icon name="whatsapp" /> WhatsApp channel</h3>
               <div className="desc">
-                Customers message this number on WhatsApp. All support chats are handled by the AI agent on the WhatsApp channel.
+                Choose how customers reach the AI agent on WhatsApp. Only one provider is active at a time.
               </div>
+              <Field label="Active provider" hint="Inbound webhooks and outbound replies use this provider.">
+                <select
+                  value={g.whatsapp.whatsapp_provider || "telnyx"}
+                  onChange={(e) => setField("whatsapp", "whatsapp_provider", e.target.value)}
+                >
+                  {WA_PROVIDERS.map((p) => (
+                    <option key={p.value} value={p.value}>{p.label}</option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Active webhook URL" hint={`Configure this URL in ${activeProvider === "meta" ? "Meta Developer Console" : activeProvider === "twilio" ? "Twilio Console" : "Telnyx portal"}.`}>
+                <input readOnly value={activeWebhook} />
+              </Field>
               <div className="row2col">
-                <Field label="Sender (from) number" hint="E.164 format, e.g. +447822002099">
-                  <input placeholder="+447822002099" value={g.whatsapp.telnyx_whatsapp_from}
-                    onChange={(e) => setField("whatsapp", "telnyx_whatsapp_from", e.target.value)} />
-                </Field>
                 <Field label="Display name">
                   <input value={g.whatsapp.whatsapp_display_name}
                     onChange={(e) => setField("whatsapp", "whatsapp_display_name", e.target.value)} />
                 </Field>
+                <Field label="Business account ID (WABA)" hint="Meta WhatsApp Business account ID — reference for Meta/Telnyx.">
+                  <input placeholder="1339285631627922" value={g.whatsapp.whatsapp_business_id}
+                    onChange={(e) => setField("whatsapp", "whatsapp_business_id", e.target.value)} />
+                </Field>
               </div>
-              <Field label="Business account ID (WABA)" hint="Meta WhatsApp Business account ID, e.g. 1339285631627922. Reference only — filled by Auto-detect.">
-                <input placeholder="1339285631627922" value={g.whatsapp.whatsapp_business_id}
-                  onChange={(e) => setField("whatsapp", "whatsapp_business_id", e.target.value)} />
-              </Field>
+              {activeProvider === "telnyx" && (
+                <Field label="Sender number (Telnyx)" hint="E.164, e.g. +447822002099">
+                  <input placeholder="+447822002099" value={g.whatsapp.telnyx_whatsapp_from}
+                    onChange={(e) => setField("whatsapp", "telnyx_whatsapp_from", e.target.value)} />
+                </Field>
+              )}
+              {activeProvider === "twilio" && (
+                <Field label="Sender number (Twilio)" hint="Set on the Twilio tab.">
+                  <input readOnly value={g.twilio?.twilio_whatsapp_from || "(set on Twilio tab)"} />
+                </Field>
+              )}
+              {activeProvider === "meta" && (
+                <Field label="Sender number (Meta)" hint="Set on the Meta tab.">
+                  <input readOnly value={g.meta?.meta_whatsapp_from || "(set on Meta tab)"} />
+                </Field>
+              )}
               {waStatus && (
                 <div className="hint" style={{ marginBottom: 12 }}>
-                  Webhook: {waStatus.webhook_url} · WA conversations: {waStatus.whatsapp_conversations} ·
-                  processed events: {waStatus.processed_webhook_events}
-                  {waStatus.profile_mismatch && (
+                  Provider: <strong>{waStatus.provider || activeProvider}</strong> ·
+                  Webhook: {waStatus.webhook_url || activeWebhook} ·
+                  WA conversations: {waStatus.whatsapp_conversations ?? "—"}
+                  {activeProvider === "telnyx" && waStatus.profile_mismatch && (
                     <div style={{ color: "var(--warn, #b45309)", marginTop: 6 }}>
-                      ⚠ Number is on <strong>{waStatus.number_profile_name}</strong> ({waStatus.number_profile_webhook || "wrong profile"}) —
-                      inbound messages are NOT reaching this app. Click <strong>Auto-detect from Telnyx</strong>.
+                      ⚠ Wrong Telnyx profile — use <strong>Auto-detect from Telnyx</strong>.
                     </div>
-                  )}
-                  {(waStatus.messaging_profiles || []).length > 0 && (
-                    <div style={{ marginTop: 8, fontSize: "0.9em" }}>
-                      <strong>menasim profile (WA 2-99):</strong>{" "}
-                      {(waStatus.messaging_profiles[0].webhook_url || "no webhook")}
-                      {waStatus.messaging_profiles[0].id === waStatus.number_profile_id
-                        ? " · number assigned here ✓"
-                        : waStatus.number_profile_name
-                          ? ` · number is on ${waStatus.number_profile_name} instead`
-                          : ""}
-                    </div>
-                  )}
-                  {waStatus.suggested_waba_id && (
-                    <div style={{ marginTop: 6 }}>Suggested WABA: {waStatus.suggested_waba_id}</div>
                   )}
                   {(waStatus.warnings || []).map((w) => (
                     <div key={w} style={{ color: "var(--warn, #b45309)", marginTop: 6 }}>⚠ {w}</div>
                   ))}
-                  {waStatus.webhook_public_key_set && (
-                    <div style={{ marginTop: 6 }}>
-                      Webhook signature verification is ON — if inbound messages never arrive, clear the
-                      webhook public key or paste the correct key from Telnyx → Messaging → Security.
-                    </div>
-                  )}
-                  {(waStatus.recent_webhooks || []).length > 0 && (
-                    <div style={{ marginTop: 10 }}>
-                      <strong>Recent Telnyx webhooks</strong>
-                      <ul style={{ margin: "6px 0 0", paddingLeft: 18, fontSize: "0.9em" }}>
-                        {waStatus.recent_webhooks.map((w) => (
-                          <li key={w.id}>
-                            {w.created_at?.slice(11, 19)} · {w.status} · {w.sender || w.event_type}
-                            {w.detail ? ` — ${w.detail.slice(0, 80)}` : ""}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
                 </div>
               )}
               <Field label="Test phone number" hint="Your mobile number to receive test messages and simulate inbound chats.">
                 <input placeholder="+447..." value={testPhone} onChange={(e) => setTestPhone(e.target.value)} />
               </Field>
               <div className="field-actions" style={{ flexWrap: "wrap", gap: 8 }}>
-                <button className="btn secondary" disabled={!!waBusy} onClick={() => autoConfigureWhatsapp()}>
-                  {waBusy === "auto" ? "Detecting…" : "Auto-detect from Telnyx"}
-                </button>
+                {activeProvider === "telnyx" && (
+                  <button className="btn secondary" disabled={!!waBusy} onClick={() => autoConfigureWhatsapp()}>
+                    {waBusy === "auto" ? "Detecting…" : "Auto-detect from Telnyx"}
+                  </button>
+                )}
                 <button className="btn secondary" disabled={!!waBusy} onClick={() => runWhatsappTest("connect")}>
                   {waBusy === "connect" ? "Testing…" : "Test connectivity"}
                 </button>
@@ -407,6 +419,84 @@ export default function Settings({ toast }) {
                 <ConnStatus state={conn.whatsapp || {}} />
                 <button className="btn primary" disabled={saving === "whatsapp"} onClick={() => save("whatsapp")}>
                   {saving === "whatsapp" ? "Saving…" : "Save changes"}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {tab === "twilio" && (
+            <div className="card">
+              <h3><Icon name="telnyx" /> Twilio WhatsApp</h3>
+              <div className="desc">
+                Connect a WhatsApp-enabled Twilio number. Set provider to <strong>Twilio</strong> on the WhatsApp tab to activate.
+              </div>
+              <Field label="Account SID">
+                <input placeholder="AC..." value={g.twilio.twilio_account_sid}
+                  onChange={(e) => setField("twilio", "twilio_account_sid", e.target.value)} />
+              </Field>
+              <Field label="Auth token">
+                <input type="password" placeholder="auth token" value={g.twilio.twilio_auth_token}
+                  onChange={(e) => setField("twilio", "twilio_auth_token", e.target.value)} />
+              </Field>
+              <Field label="WhatsApp sender number" hint="E.164, e.g. +14155238886 or your approved WA number">
+                <input placeholder="+447..." value={g.twilio.twilio_whatsapp_from}
+                  onChange={(e) => setField("twilio", "twilio_whatsapp_from", e.target.value)} />
+              </Field>
+              <Field label="Webhook URL (Twilio Console → Messaging → WhatsApp sandbox / sender)">
+                <input readOnly value={webhookUrls.twilio || `${status.public_base_url || ""}/twilio/webhooks/whatsapp`} />
+              </Field>
+              <div className="field-actions">
+                <button className="btn secondary" onClick={() => test("twilio")}>Test connection</button>
+                <ConnStatus state={conn.twilio || {}} />
+                <button className="btn primary" disabled={saving === "twilio"} onClick={() => save("twilio")}>
+                  {saving === "twilio" ? "Saving…" : "Save changes"}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {tab === "meta" && (
+            <div className="card">
+              <h3><Icon name="brain" /> Meta WhatsApp Cloud API (direct)</h3>
+              <div className="desc">
+                Connect WhatsApp directly via Meta — no Telnyx middleman. Set provider to <strong>Meta Cloud API</strong> on the WhatsApp tab.
+              </div>
+              <Field label="Permanent access token">
+                <input type="password" placeholder="EAA..." value={g.meta.meta_whatsapp_token}
+                  onChange={(e) => setField("meta", "meta_whatsapp_token", e.target.value)} />
+              </Field>
+              <div className="row2col">
+                <Field label="Phone number ID" hint="From Meta Developer Console → WhatsApp → API Setup">
+                  <input placeholder="1234567890" value={g.meta.meta_phone_number_id}
+                    onChange={(e) => setField("meta", "meta_phone_number_id", e.target.value)} />
+                </Field>
+                <Field label="Display phone number (E.164)" hint="For reference in admin UI">
+                  <input placeholder="+447822002099" value={g.meta.meta_whatsapp_from}
+                    onChange={(e) => setField("meta", "meta_whatsapp_from", e.target.value)} />
+                </Field>
+              </div>
+              <div className="row2col">
+                <Field label="WABA ID">
+                  <input placeholder="1339285631627922" value={g.meta.meta_waba_id}
+                    onChange={(e) => setField("meta", "meta_waba_id", e.target.value)} />
+                </Field>
+                <Field label="Webhook verify token" hint="You choose this — same value in Meta webhook setup">
+                  <input placeholder="menasim-verify-token" value={g.meta.meta_verify_token}
+                    onChange={(e) => setField("meta", "meta_verify_token", e.target.value)} />
+                </Field>
+              </div>
+              <Field label="App secret" hint="Used to verify X-Hub-Signature-256 on inbound webhooks">
+                <input type="password" placeholder="app secret" value={g.meta.meta_app_secret}
+                  onChange={(e) => setField("meta", "meta_app_secret", e.target.value)} />
+              </Field>
+              <Field label="Webhook URL (Meta Developer Console → WhatsApp → Configuration)">
+                <input readOnly value={webhookUrls.meta || `${status.public_base_url || ""}/meta/webhooks/whatsapp`} />
+              </Field>
+              <div className="field-actions">
+                <button className="btn secondary" onClick={() => test("meta")}>Test connection</button>
+                <ConnStatus state={conn.meta || {}} />
+                <button className="btn primary" disabled={saving === "meta"} onClick={() => save("meta")}>
+                  {saving === "meta" ? "Saving…" : "Save changes"}
                 </button>
               </div>
             </div>

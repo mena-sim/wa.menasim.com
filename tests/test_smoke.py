@@ -812,6 +812,84 @@ def test_support_contact_arabic_escalates(db, monkeypatch):
     assert ticket.contact == "+447700900011"
 
 
+def test_whatsapp_provider_defaults_to_telnyx(db):
+    from app.services import runtime_config
+
+    assert runtime_config.whatsapp_provider(db) == "telnyx"
+
+
+def test_whatsapp_enabled_per_provider(db):
+    from app.services import runtime_config
+
+    runtime_config.set_value(db, "whatsapp_provider", "twilio")
+    runtime_config.set_value(db, "twilio_account_sid", "AC123")
+    runtime_config.set_value(db, "twilio_auth_token", "secret")
+    runtime_config.set_value(db, "twilio_whatsapp_from", "+15550001111")
+    db.commit()
+    assert runtime_config.whatsapp_enabled(db) is True
+
+    runtime_config.set_value(db, "whatsapp_provider", "meta")
+    runtime_config.set_value(db, "meta_whatsapp_token", "EAAtest")
+    runtime_config.set_value(db, "meta_phone_number_id", "12345")
+    db.commit()
+    assert runtime_config.whatsapp_enabled(db) is True
+
+
+def test_twilio_parse_inbound_text():
+    from app.services.whatsapp.twilio_provider import parse_inbound
+
+    inbound = parse_inbound(
+        {
+            "From": "whatsapp:+447954823445",
+            "Body": "send email",
+            "MessageSid": "SM123",
+            "NumMedia": "0",
+        }
+    )
+    assert inbound is not None
+    assert inbound.sender_id == "+447954823445"
+    assert inbound.text == "send email"
+
+
+def test_meta_parse_inbound_text():
+    from app.services.whatsapp.meta_provider import parse_inbound
+
+    body = {
+        "object": "whatsapp_business_account",
+        "entry": [
+            {
+                "changes": [
+                    {
+                        "value": {
+                            "messages": [
+                                {
+                                    "from": "447954823445",
+                                    "id": "wamid.test",
+                                    "type": "text",
+                                    "text": {"body": "hello meta"},
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        ],
+    }
+    messages = parse_inbound(body)
+    assert len(messages) == 1
+    assert messages[0].text == "hello meta"
+    assert messages[0].sender_id == "+447954823445"
+
+
+def test_webhook_urls_include_all_providers():
+    from app.services.whatsapp.providers import webhook_urls
+
+    urls = webhook_urls()
+    assert "/telnyx/webhooks/messages" in urls["telnyx"]
+    assert "/twilio/webhooks/whatsapp" in urls["twilio"]
+    assert "/meta/webhooks/whatsapp" in urls["meta"]
+
+
 def test_empty_text_reply_not_voice_specific(db):
     from app.agent import engine
     from app.models.message import Message
