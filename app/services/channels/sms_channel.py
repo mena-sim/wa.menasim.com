@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.agent.engine import handle_message
 from app.core.logging import get_logger
+from app.models.message import Message
 from app.services import inbound_media
 from app.services.channels.base import InboundMessage
 from app.services.whatsapp.twilio_provider import send_sms
@@ -13,6 +14,23 @@ from app.services.whatsapp.twilio_provider import send_sms
 logger = get_logger(__name__)
 
 SMS_CHANNEL = "sms"
+
+_VERIFY_WORDS = ("code", "whatsapp", "facebook", "meta", "verif", "otp")
+
+
+def looks_like_verification_sms(text: str) -> bool:
+    """True for Meta/Twilio OTP-style SMS so we store it but do not auto-reply."""
+    t = (text or "").strip()
+    if not t:
+        return False
+    digits = "".join(c for c in t if c.isdigit())
+    if not (4 <= len(digits) <= 8):
+        return False
+    compact = t.replace(" ", "").replace("-", "")
+    if compact.isdigit():
+        return True
+    lowered = t.lower()
+    return any(word in lowered for word in _VERIFY_WORDS)
 
 
 def process_inbound(db: Session, inbound: InboundMessage) -> dict[str, Any]:
@@ -24,6 +42,24 @@ def process_inbound(db: Session, inbound: InboundMessage) -> dict[str, Any]:
     if convo.handed_over:
         convo.handed_over = False
         db.commit()
+
+    if looks_like_verification_sms(inbound.text):
+        db.add(
+            Message(
+                conversation_id=convo.id,
+                role="user",
+                content=inbound.text,
+                media_url=inbound.media_url,
+            )
+        )
+        db.commit()
+        return {
+            "replied": False,
+            "verification_sms": True,
+            "conversation_id": convo.id,
+            "channel": SMS_CHANNEL,
+            "text": inbound.text,
+        }
 
     prepared, media_log = inbound_media.prepare_inbound_media(db, inbound)
     if isinstance(prepared, str):

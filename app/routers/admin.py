@@ -292,6 +292,17 @@ def sms_test_send(
     return test_sms_send(db, payload.to, payload.text)
 
 
+@router.get("/twilio/messages")
+def twilio_messages(
+    to: str = "",
+    db: Session = Depends(get_db),
+    _: str = Depends(admin_auth.require_admin),
+) -> dict:
+    from app.services.whatsapp.twilio_provider import list_recent_sms
+
+    return list_recent_sms(db, to_number=to)
+
+
 # ---------------------------------------------------------------- conversations
 def _status_of(convo: Conversation) -> str:
     if convo.closed:

@@ -58,6 +58,8 @@ export const api = {
   configureTwilioSms: (sid, phone_number = "") =>
     request("POST", "/admin/twilio/configure-sms", { sid, phone_number }),
   testSmsSend: (to, text) => request("POST", "/admin/sms/test-send", { to, text }),
+  listTwilioMessages: (to = "") =>
+    request("GET", `/admin/twilio/messages?to=${encodeURIComponent(to || "")}`),
 
   listConversations: (filter = "all", q = "", channel = "all") =>
     request(

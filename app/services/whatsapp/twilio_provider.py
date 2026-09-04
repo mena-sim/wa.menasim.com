@@ -254,6 +254,67 @@ def list_incoming_numbers(db: Session) -> dict[str, Any]:
     }
 
 
+def list_recent_sms(db: Session, *, to_number: str = "", limit: int = 25) -> dict[str, Any]:
+    """Read inbound/outbound SMS from Twilio's message log (includes Meta verification codes)."""
+    account_sid, auth_token = _auth(db)
+    if not account_sid or not auth_token:
+        return {"ok": False, "message": "Twilio Account SID and Auth Token are required.", "messages": []}
+
+    to_number = normalize_e164(to_number or runtime_config.sms_from_number(db))
+    url = f"https://api.twilio.com/2010-04-01/Accounts/{account_sid}/Messages.json"
+    params: dict[str, Any] = {"PageSize": max(1, min(int(limit), 50))}
+    if to_number:
+        params["To"] = to_number
+    try:
+        with httpx.Client(timeout=20.0) as client:
+            resp = client.get(url, auth=(account_sid, auth_token), params=params)
+        if resp.status_code >= 300:
+            return {
+                "ok": False,
+                "message": f"HTTP {resp.status_code}: could not load Twilio SMS log.",
+                "messages": [],
+            }
+        payload = resp.json()
+    except httpx.HTTPError as exc:
+        return {"ok": False, "message": f"Connection error: {exc}", "messages": []}
+
+    messages = []
+    for item in payload.get("messages") or []:
+        body = str(item.get("body") or "")
+        direction = str(item.get("direction") or "")
+        messages.append(
+            {
+                "sid": item.get("sid") or "",
+                "from": item.get("from") or "",
+                "to": item.get("to") or "",
+                "body": body,
+                "status": item.get("status") or "",
+                "direction": direction,
+                "inbound": direction.startswith("inbound"),
+                "date_sent": item.get("date_sent") or item.get("date_created") or "",
+            }
+        )
+    inbound = sum(1 for m in messages if m["inbound"])
+    hint = ""
+    if not messages:
+        hint = (
+            "No SMS in Twilio's log for this number. If Meta just sent a code, wait a few seconds and retry. "
+            "Twilio trial accounts only receive SMS from verified caller IDs — upgrade the Twilio account "
+            "or Meta's verification SMS will never arrive."
+        )
+    return {
+        "ok": True,
+        "message": (
+            f"Loaded {len(messages)} recent SMS"
+            + (f" to {to_number}" if to_number else "")
+            + (f" ({inbound} inbound)." if messages else ".")
+        ),
+        "hint": hint,
+        "to": to_number,
+        "messages": messages,
+    }
+
+
 def configure_sms_webhook(
     db: Session, *, sid: str = "", phone_number: str = ""
 ) -> dict[str, Any]:

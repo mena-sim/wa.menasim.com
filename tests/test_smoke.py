@@ -1064,3 +1064,79 @@ def test_sms_inbound_creates_conversation(db, monkeypatch):
     assert convo.channel == "sms"
     assert result.get("conversation_id") == convo.id
 
+
+def test_looks_like_verification_sms():
+    from app.services.channels.sms_channel import looks_like_verification_sms
+
+    assert looks_like_verification_sms("482913") is True
+    assert looks_like_verification_sms("WhatsApp code 123-456") is True
+    assert looks_like_verification_sms("I need help with my eSIM") is False
+
+
+def test_verification_sms_is_stored_without_reply(db, monkeypatch):
+    from app.agent import engine
+    from app.models.message import Message
+    from app.services.channels.base import InboundMessage
+    from app.services.channels import sms_channel
+
+    monkeypatch.setattr(
+        sms_channel, "send_sms", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("no send"))
+    )
+    result = sms_channel.process_inbound(
+        db,
+        InboundMessage(channel="sms", sender_id="+447700900322", text="482913"),
+    )
+    assert result["verification_sms"] is True
+    assert result["replied"] is False
+    convo = engine.get_or_create_conversation(db, "sms", "+447700900322")
+    texts = [m.content for m in convo.messages]
+    assert "482913" in texts
+
+
+def test_list_recent_sms_reads_twilio_log(db, monkeypatch):
+    from app.services import runtime_config
+    from app.services.whatsapp import twilio_provider
+
+    runtime_config.set_value(db, "twilio_account_sid", "ACxxx")
+    runtime_config.set_value(db, "twilio_auth_token", "token")
+    runtime_config.set_value(db, "twilio_sms_from", "+447822002099")
+    db.commit()
+
+    class FakeResp:
+        status_code = 200
+
+        def json(self):
+            return {
+                "messages": [
+                    {
+                        "sid": "SMin",
+                        "from": "+15551212",
+                        "to": "+447822002099",
+                        "body": "WhatsApp code 123-456",
+                        "status": "received",
+                        "direction": "inbound-api",
+                        "date_sent": "Thu, 04 Sep 2026 23:00:00 +0000",
+                    }
+                ]
+            }
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def get(self, url, auth=None, params=None):
+            assert params["To"] == "+447822002099"
+            return FakeResp()
+
+    monkeypatch.setattr(twilio_provider.httpx, "Client", FakeClient)
+    result = twilio_provider.list_recent_sms(db)
+    assert result["ok"] is True
+    assert result["messages"][0]["body"] == "WhatsApp code 123-456"
+    assert result["messages"][0]["inbound"] is True
+

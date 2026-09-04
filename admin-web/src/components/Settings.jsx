@@ -71,6 +71,8 @@ export default function Settings({ toast }) {
   const [smtpBusy, setSmtpBusy] = useState("");
   const [twilioNumbers, setTwilioNumbers] = useState([]);
   const [twilioBusy, setTwilioBusy] = useState("");
+  const [twilioMessages, setTwilioMessages] = useState([]);
+  const [twilioMsgHint, setTwilioMsgHint] = useState("");
 
   async function load() {
     try {
@@ -229,6 +231,21 @@ export default function Settings({ toast }) {
       const res = await api.listTwilioNumbers();
       setTwilioNumbers(res.numbers || []);
       if (!quiet) toast(res.message, !res.ok);
+    } catch (e) {
+      toast(e.message, true);
+    } finally {
+      setTwilioBusy("");
+    }
+  }
+
+  async function loadTwilioMessages() {
+    setTwilioBusy("messages");
+    try {
+      const to = (groups?.twilio?.twilio_sms_from || groups?.twilio?.twilio_whatsapp_from || "").trim();
+      const res = await api.listTwilioMessages(to);
+      setTwilioMessages(res.messages || []);
+      setTwilioMsgHint(res.hint || "");
+      toast(res.message, !res.ok);
     } catch (e) {
       toast(e.message, true);
     } finally {
@@ -521,6 +538,8 @@ export default function Settings({ toast }) {
               <h3>Receive SMS</h3>
               <div className="desc">
                 Point a Twilio mobile number at this webhook so customers can text the agent.
+                Meta WhatsApp verification codes also arrive as SMS to this number — they will not
+                show on your personal phone. Click <strong>Load recent SMS</strong> after Meta sends the code.
                 If the number is in a Messaging Service, set that service’s inbound URL to the same webhook.
               </div>
               <Field label="Enable inbound SMS">
@@ -540,6 +559,9 @@ export default function Settings({ toast }) {
               <div className="field-actions" style={{ marginTop: 0 }}>
                 <button className="btn secondary" disabled={!!twilioBusy} onClick={loadTwilioNumbers}>
                   {twilioBusy === "list" ? "Loading…" : "Load numbers from Twilio"}
+                </button>
+                <button className="btn secondary" disabled={!!twilioBusy} onClick={loadTwilioMessages}>
+                  {twilioBusy === "messages" ? "Loading…" : "Load recent SMS"}
                 </button>
                 <button className="btn secondary" disabled={!!twilioBusy} onClick={runSmsTestSend}>
                   {twilioBusy === "send" ? "Sending…" : "Send test SMS"}
@@ -571,6 +593,27 @@ export default function Settings({ toast }) {
                     </li>
                   ))}
                 </ul>
+              )}
+              {twilioMessages.length > 0 && (
+                <ul className="number-list">
+                  {twilioMessages.map((m) => (
+                    <li key={m.sid || `${m.date_sent}-${m.from}-${m.body}`}>
+                      <div>
+                        <strong>{m.inbound ? "IN" : "OUT"}</strong>
+                        <span className="muted">
+                          {" "}{m.from} → {m.to} · {m.status}
+                          {m.date_sent ? ` · ${m.date_sent}` : ""}
+                        </span>
+                        <div style={{ marginTop: 4 }}>{m.body || "(no body)"}</div>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {twilioMsgHint && (
+                <div className="hint" style={{ color: "var(--warn, #b45309)", marginBottom: 12 }}>
+                  {twilioMsgHint}
+                </div>
               )}
               <Field label="Test phone number" hint="Your personal mobile — used only for Send test SMS.">
                 <input placeholder="+447..." value={testPhone} onChange={(e) => setTestPhone(e.target.value)} />
@@ -604,6 +647,9 @@ export default function Settings({ toast }) {
               <h3><Icon name="brain" /> Meta WhatsApp Cloud API (direct)</h3>
               <div className="desc">
                 Connect WhatsApp directly via Meta — no Telnyx middleman. Set provider to <strong>Meta Cloud API</strong> on the WhatsApp tab.
+                When Meta asks to verify the phone number it sends an <strong>SMS code to the Twilio number</strong>, not to your mobile.
+                Open the <strong>Twilio</strong> tab → <strong>Load recent SMS</strong> and paste the code back into Meta.
+                Twilio trial accounts cannot receive that SMS until you upgrade (trial only accepts SMS from verified numbers).
               </div>
               <Field label="Permanent access token">
                 <input type="password" placeholder="EAA..." value={g.meta.meta_whatsapp_token}
