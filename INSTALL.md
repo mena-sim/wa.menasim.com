@@ -164,6 +164,36 @@ Paste the **Telnyx API key**, **messaging profile ID**, **webhook public key**, 
 **WhatsApp sender number** in the admin (Settings → Telnyx / WhatsApp), then **Save** and
 **Test connection**.
 
+## 9b. Twilio mobile number (SMS)
+
+SMS is independent of the WhatsApp provider. You can keep Telnyx/Meta for WhatsApp and still
+receive customer texts on a Twilio number.
+
+1. In **Twilio Console → Account → API keys & tokens**, copy Account SID and Auth Token.
+2. Buy or port a number under **Phone Numbers → Manage → Buy a number** (enable **SMS**).
+3. In admin **Settings → Twilio**, paste SID + token, **Save**, then **Load numbers from Twilio**.
+4. Click **Use for SMS** on the number. That sets Twilio’s inbound webhook to:
+
+```
+https://wa.menasim.com/twilio/webhooks/sms
+```
+
+   You can also paste that URL yourself: open the number → Messaging → “A message comes in”
+   → Webhook, HTTP POST.
+
+5. Enable inbound SMS, **Save SMS settings**, then text the number. The chat appears in
+   **Conversations** with channel `sms`.
+
+If the number belongs to a **Messaging Service**, set the service inbound URL to the same
+webhook (the per-number `SmsUrl` is ignored).
+
+WhatsApp via Twilio is separate: set the WhatsApp sender on the same tab, then choose
+**Twilio** as the active provider on the WhatsApp tab. WhatsApp webhook:
+
+```
+https://wa.menasim.com/twilio/webhooks/whatsapp
+```
+
 ## 10. First-run checklist
 
 - [ ] `/health` returns `ok`
@@ -173,6 +203,7 @@ Paste the **Telnyx API key**, **messaging profile ID**, **webhook public key**, 
 - [ ] Upload/verify knowledge base (Settings → Agent & KB → Rebuild index)
 - [ ] Import old WhatsApp `.txt` history (Settings → Agent & KB → Import WhatsApp history)
 - [ ] Telnyx test passes and webhook is set
+- [ ] (Optional) Twilio SMS: number loaded, inbound webhook set, test SMS received
 - [ ] Send a test WhatsApp message and confirm it appears in **Conversations**
 
 ## Updating later

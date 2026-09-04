@@ -27,10 +27,12 @@ SCHEMA: dict[str, tuple[str, bool, str | None, Any]] = {
     "telnyx_whatsapp_from": ("whatsapp", False, "telnyx_whatsapp_from", ""),
     "whatsapp_display_name": ("whatsapp", False, None, "eSIM Support"),
     "whatsapp_business_id": ("whatsapp", False, None, ""),
-    # Twilio WhatsApp
+    # Twilio WhatsApp + SMS
     "twilio_account_sid": ("twilio", False, "twilio_account_sid", ""),
     "twilio_auth_token": ("twilio", True, "twilio_auth_token", ""),
     "twilio_whatsapp_from": ("twilio", False, "twilio_whatsapp_from", ""),
+    "twilio_sms_from": ("twilio", False, "twilio_sms_from", ""),
+    "twilio_sms_enabled": ("twilio", False, "twilio_sms_enabled", "false"),
     # Meta WhatsApp Cloud API (direct)
     "meta_whatsapp_token": ("meta", True, "meta_whatsapp_token", ""),
     "meta_phone_number_id": ("meta", False, "meta_phone_number_id", ""),
@@ -226,6 +228,21 @@ def woocommerce_enabled(db: Session) -> bool:
 
 def smtp_enabled(db: Session) -> bool:
     return bool(get(db, "smtp_host") and get(db, "alert_email_to"))
+
+
+def sms_from_number(db: Session) -> str:
+    """Twilio SMS sender; falls back to the WhatsApp Twilio number if SMS is unset."""
+    return get(db, "twilio_sms_from") or get(db, "twilio_whatsapp_from")
+
+
+def sms_enabled(db: Session) -> bool:
+    if not get_bool(db, "twilio_sms_enabled"):
+        return False
+    return bool(
+        get(db, "twilio_account_sid")
+        and get(db, "twilio_auth_token")
+        and sms_from_number(db)
+    )
 
 
 def transcription_config(db: Session) -> dict[str, Any]:

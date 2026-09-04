@@ -54,6 +54,13 @@ export const api = {
   testWhatsappInbound: (from_number, text, send_reply = false) =>
     request("POST", "/admin/whatsapp/test-inbound", { from_number, text, send_reply }),
 
+  listTwilioNumbers: () => request("GET", "/admin/twilio/numbers"),
+  configureTwilioSms: (sid, phone_number = "") =>
+    request("POST", "/admin/twilio/configure-sms", { sid, phone_number }),
+  testSmsSend: (to, text) => request("POST", "/admin/sms/test-send", { to, text }),
+  listTwilioMessages: (to = "") =>
+    request("GET", `/admin/twilio/messages?to=${encodeURIComponent(to || "")}`),
+
   listConversations: (filter = "all", q = "", channel = "all") =>
     request(
       "GET",

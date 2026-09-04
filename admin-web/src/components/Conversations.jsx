@@ -41,7 +41,7 @@ export default function Conversations({ toast }) {
 
   async function loadList() {
     try {
-      const data = await api.listConversations(filter, q, "whatsapp");
+      const data = await api.listConversations(filter, q, "all");
       setList(data.conversations);
     } catch (e) {
       /* polling errors are silent */
@@ -106,7 +106,7 @@ export default function Conversations({ toast }) {
     try {
       const res = await api.reply(convo.conversation.id, text);
       if (res.delivery && res.delivery.ok === false && !res.delivery.note) {
-        toast("Saved, but WhatsApp send failed — check Telnyx config.", true);
+        toast("Saved, but delivery failed — check Twilio/Telnyx config.", true);
       }
       await loadConvo(convo.conversation.id);
       loadList();
@@ -145,7 +145,7 @@ export default function Conversations({ toast }) {
     <>
       <div className="sessions" style={mobileChat ? { display: undefined } : undefined}>
         <div className="head">
-          <h2>WhatsApp</h2>
+          <h2>Inbox</h2>
           <div className="search-wrap">
             <Icon name="search" />
             <input
@@ -170,7 +170,7 @@ export default function Conversations({ toast }) {
         <div className="session-list">
           {list.length === 0 && (
             <div className="empty-note">
-              No WhatsApp conversations yet. Send a message to your business number, or use Settings → WhatsApp → Auto-detect / Test agent.
+              No conversations yet. Send a WhatsApp or SMS to your business number, or use Settings → WhatsApp / Twilio to test.
             </div>
           )}
           {list.map((s) => (
@@ -185,7 +185,7 @@ export default function Conversations({ toast }) {
                   <span>{s.sender_id || s.name}</span>
                   <span className={`badge ${badgeClass(s.status)}`}>{statusLabel(s.status)}</span>
                 </div>
-                <div className="row2">{s.last || "…"}</div>
+                <div className="row2">{s.channel === "sms" ? "SMS" : s.channel === "whatsapp" ? "WhatsApp" : s.channel} · {s.last || "…"}</div>
                 {s.handed_over && (
                   <span className="handoff-flag">
                     <Icon name="handoff" /> Human replying
@@ -204,7 +204,7 @@ export default function Conversations({ toast }) {
               <Icon name="back" />
             </button>
             <div>
-              <h1>WhatsApp chats</h1>
+              <h1>Customer chats</h1>
               <div className="sub">
                 {list.length} conversations · {liveCount} live · {handoffCount} handed over
               </div>

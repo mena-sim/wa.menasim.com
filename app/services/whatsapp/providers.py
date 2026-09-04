@@ -30,6 +30,7 @@ def webhook_urls() -> dict[str, str]:
         "telnyx": f"{base}/telnyx/webhooks/messages",
         "twilio": f"{base}/twilio/webhooks/whatsapp",
         "meta": f"{base}/meta/webhooks/whatsapp",
+        "sms": f"{base}/twilio/webhooks/sms",
     }
 
 

@@ -296,18 +296,25 @@ def handle_message(
     if wants_support_contact(user_content):
         from app.agent.tools import escalate as escalate_tool
 
-        contact = sender_id if channel == "whatsapp" else None
+        contact = sender_id if channel in ("whatsapp", "sms") else None
         esc = escalate_tool.run(
             ToolContext(db=db, conversation=convo, language=language),
             reason="Customer asked to contact support",
             summary=user_content,
             contact=contact,
         )
-        reply = (
-            "تم إرسال طلبك إلى فريق الدعم وسيتواصلون معك قريبًا على واتساب."
-            if language == "ar"
-            else "I've emailed our support team with your request. They'll contact you on WhatsApp soon."
-        )
+        if channel == "sms":
+            reply = (
+                "تم إرسال طلبك إلى فريق الدعم وسيتواصلون معك قريبًا برسالة نصية."
+                if language == "ar"
+                else "I've emailed our support team with your request. They'll contact you by SMS soon."
+            )
+        else:
+            reply = (
+                "تم إرسال طلبك إلى فريق الدعم وسيتواصلون معك قريبًا على واتساب."
+                if language == "ar"
+                else "I've emailed our support team with your request. They'll contact you on WhatsApp soon."
+            )
         db.add(Message(conversation_id=convo.id, role="assistant", content=reply))
         db.commit()
         return AgentResult(
@@ -379,6 +386,7 @@ def handle_message(
     system_prompt = build_system_prompt(
         language,
         whatsapp=(channel == "whatsapp"),
+        channel=channel,
         agent_name=runtime_config.get(db, "agent_name"),
         tone=runtime_config.get(db, "agent_tone"),
         extra_instructions=runtime_config.get(db, "agent_system_instructions"),

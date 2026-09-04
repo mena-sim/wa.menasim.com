@@ -69,6 +69,10 @@ export default function Settings({ toast }) {
   const [testPhone, setTestPhone] = useState("");
   const [waBusy, setWaBusy] = useState("");
   const [smtpBusy, setSmtpBusy] = useState("");
+  const [twilioNumbers, setTwilioNumbers] = useState([]);
+  const [twilioBusy, setTwilioBusy] = useState("");
+  const [twilioMessages, setTwilioMessages] = useState([]);
+  const [twilioMsgHint, setTwilioMsgHint] = useState("");
 
   async function load() {
     try {
@@ -221,6 +225,72 @@ export default function Settings({ toast }) {
     }
   }
 
+  async function loadTwilioNumbers(quiet = false) {
+    setTwilioBusy("list");
+    try {
+      const res = await api.listTwilioNumbers();
+      setTwilioNumbers(res.numbers || []);
+      if (!quiet) toast(res.message, !res.ok);
+    } catch (e) {
+      toast(e.message, true);
+    } finally {
+      setTwilioBusy("");
+    }
+  }
+
+  async function loadTwilioMessages() {
+    setTwilioBusy("messages");
+    try {
+      const to = (groups?.twilio?.twilio_sms_from || groups?.twilio?.twilio_whatsapp_from || "").trim();
+      const res = await api.listTwilioMessages(to);
+      setTwilioMessages(res.messages || []);
+      setTwilioMsgHint(res.hint || "");
+      toast(res.message, !res.ok);
+    } catch (e) {
+      toast(e.message, true);
+    } finally {
+      setTwilioBusy("");
+    }
+  }
+
+  async function configureTwilioSms(sid, phoneNumber) {
+    setTwilioBusy(sid || phoneNumber || "configure");
+    try {
+      const res = await api.configureTwilioSms(sid, phoneNumber);
+      toast(res.message, !res.ok);
+      if (res.ok) {
+        if (res.phone_number) setField("twilio", "twilio_sms_from", res.phone_number);
+        setField("twilio", "twilio_sms_enabled", "true");
+        await load();
+        await loadTwilioNumbers(true);
+      }
+    } catch (e) {
+      toast(e.message, true);
+    } finally {
+      setTwilioBusy("");
+    }
+  }
+
+  async function runSmsTestSend() {
+    const phone = (testPhone || groups?.twilio?.twilio_sms_from || "").trim();
+    if (!phone) {
+      toast("Enter a test phone number (your mobile) to receive the SMS.", true);
+      return;
+    }
+    setTwilioBusy("send");
+    try {
+      const res = await api.testSmsSend(
+        phone,
+        "Test from menasim support. If you see this, Twilio SMS is working."
+      );
+      toast(res.message, !res.ok);
+    } catch (e) {
+      toast(e.message, true);
+    } finally {
+      setTwilioBusy("");
+    }
+  }
+
   if (!groups) {
     return (
       <div className="main">
@@ -238,6 +308,8 @@ export default function Settings({ toast }) {
   const activeProvider = g.whatsapp?.whatsapp_provider || status.whatsapp_provider || "telnyx";
   const webhookUrls = status.webhook_urls || {};
   const activeWebhook = webhookUrls[activeProvider] || status.webhook_url || "";
+  const smsWebhook =
+    status.sms_webhook_url || webhookUrls.sms || `${status.public_base_url || ""}/twilio/webhooks/sms`;
 
   return (
     <div className="main">
@@ -371,9 +443,15 @@ export default function Settings({ toast }) {
                 </Field>
               )}
               {activeProvider === "twilio" && (
+                <>
                 <Field label="Sender number (Twilio)" hint="Set on the Twilio tab.">
                   <input readOnly value={g.twilio?.twilio_whatsapp_from || "(set on Twilio tab)"} />
                 </Field>
+                <div className="hint" style={{ marginBottom: 12 }}>
+                  Inbound SMS is configured separately on the <strong>Twilio</strong> tab
+                  (load numbers → Use for SMS). SMS webhook: {smsWebhook}
+                </div>
+                </>
               )}
               {activeProvider === "meta" && (
                 <Field label="Sender number (Meta)" hint="Set on the Meta tab.">
@@ -425,11 +503,20 @@ export default function Settings({ toast }) {
           )}
 
           {tab === "twilio" && (
+            <>
             <div className="card">
-              <h3><Icon name="telnyx" /> Twilio WhatsApp</h3>
+              <h3><Icon name="telnyx" /> Twilio account</h3>
               <div className="desc">
-                Connect a WhatsApp-enabled Twilio number. Set provider to <strong>Twilio</strong> on the WhatsApp tab to activate.
+                Use the same Twilio account for WhatsApp and/or inbound SMS. SMS works even if
+                the WhatsApp provider stays Telnyx or Meta.
               </div>
+              <ol className="setup-steps">
+                <li>In Twilio Console open <strong>Account → API keys &amp; tokens</strong> and copy the Account SID and Auth Token.</li>
+                <li>Buy or port a mobile number under <strong>Phone Numbers → Manage → Buy a number</strong>. Enable <strong>SMS</strong> (MMS optional).</li>
+                <li>Save credentials below, then click <strong>Load numbers</strong> and <strong>Use for SMS</strong> on the number. That points Twilio’s inbound SMS webhook at this app.</li>
+                <li>Text that number from your phone — the chat appears in Conversations as channel <strong>sms</strong>.</li>
+                <li>Optional WhatsApp: set the WhatsApp sender, then choose <strong>Twilio</strong> on the WhatsApp tab.</li>
+              </ol>
               <Field label="Account SID">
                 <input placeholder="AC..." value={g.twilio.twilio_account_sid}
                   onChange={(e) => setField("twilio", "twilio_account_sid", e.target.value)} />
@@ -437,13 +524,6 @@ export default function Settings({ toast }) {
               <Field label="Auth token">
                 <input type="password" placeholder="auth token" value={g.twilio.twilio_auth_token}
                   onChange={(e) => setField("twilio", "twilio_auth_token", e.target.value)} />
-              </Field>
-              <Field label="WhatsApp sender number" hint="E.164, e.g. +14155238886 or your approved WA number">
-                <input placeholder="+447..." value={g.twilio.twilio_whatsapp_from}
-                  onChange={(e) => setField("twilio", "twilio_whatsapp_from", e.target.value)} />
-              </Field>
-              <Field label="Webhook URL (Twilio Console → Messaging → WhatsApp sandbox / sender)">
-                <input readOnly value={webhookUrls.twilio || `${status.public_base_url || ""}/twilio/webhooks/whatsapp`} />
               </Field>
               <div className="field-actions">
                 <button className="btn secondary" onClick={() => test("twilio")}>Test connection</button>
@@ -453,6 +533,113 @@ export default function Settings({ toast }) {
                 </button>
               </div>
             </div>
+
+            <div className="card">
+              <h3>Receive SMS</h3>
+              <div className="desc">
+                Point a Twilio mobile number at this webhook so customers can text the agent.
+                Meta WhatsApp verification codes also arrive as SMS to this number — they will not
+                show on your personal phone. Click <strong>Load recent SMS</strong> after Meta sends the code.
+                If the number is in a Messaging Service, set that service’s inbound URL to the same webhook.
+              </div>
+              <Field label="Enable inbound SMS">
+                <select value={g.twilio?.twilio_sms_enabled || "false"}
+                  onChange={(e) => setField("twilio", "twilio_sms_enabled", e.target.value)}>
+                  <option value="true">Enabled</option>
+                  <option value="false">Disabled</option>
+                </select>
+              </Field>
+              <Field label="SMS number" hint="E.164 Twilio number that receives texts. Can be the same as the WhatsApp number.">
+                <input placeholder="+447..." value={g.twilio?.twilio_sms_from || ""}
+                  onChange={(e) => setField("twilio", "twilio_sms_from", e.target.value)} />
+              </Field>
+              <Field label="SMS webhook URL" hint="Twilio Console → Phone Numbers → the number → Messaging → “A message comes in” (HTTP POST).">
+                <input readOnly value={smsWebhook} />
+              </Field>
+              <div className="field-actions" style={{ marginTop: 0 }}>
+                <button className="btn secondary" disabled={!!twilioBusy} onClick={loadTwilioNumbers}>
+                  {twilioBusy === "list" ? "Loading…" : "Load numbers from Twilio"}
+                </button>
+                <button className="btn secondary" disabled={!!twilioBusy} onClick={loadTwilioMessages}>
+                  {twilioBusy === "messages" ? "Loading…" : "Load recent SMS"}
+                </button>
+                <button className="btn secondary" disabled={!!twilioBusy} onClick={runSmsTestSend}>
+                  {twilioBusy === "send" ? "Sending…" : "Send test SMS"}
+                </button>
+                <button className="btn primary" disabled={saving === "twilio"} onClick={() => save("twilio")}>
+                  {saving === "twilio" ? "Saving…" : "Save SMS settings"}
+                </button>
+              </div>
+              {twilioNumbers.length > 0 && (
+                <ul className="number-list">
+                  {twilioNumbers.map((n) => (
+                    <li key={n.sid}>
+                      <div>
+                        <strong>{n.phone_number}</strong>
+                        <span className="muted">
+                          {" "}{n.friendly_name && n.friendly_name !== n.phone_number ? `· ${n.friendly_name} ` : ""}
+                          {n.capabilities?.sms ? "SMS" : "no SMS"}
+                          {n.capabilities?.mms ? " · MMS" : ""}
+                          {n.sms_configured ? " · webhook OK" : n.sms_url ? ` · webhook: ${n.sms_url}` : " · webhook not set"}
+                        </span>
+                      </div>
+                      <button
+                        className="btn secondary"
+                        disabled={!!twilioBusy || !n.capabilities?.sms}
+                        onClick={() => configureTwilioSms(n.sid, n.phone_number)}
+                      >
+                        {twilioBusy === n.sid ? "Setting…" : "Use for SMS"}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {twilioMessages.length > 0 && (
+                <ul className="number-list">
+                  {twilioMessages.map((m) => (
+                    <li key={m.sid || `${m.date_sent}-${m.from}-${m.body}`}>
+                      <div>
+                        <strong>{m.inbound ? "IN" : "OUT"}</strong>
+                        <span className="muted">
+                          {" "}{m.from} → {m.to} · {m.status}
+                          {m.date_sent ? ` · ${m.date_sent}` : ""}
+                        </span>
+                        <div style={{ marginTop: 4 }}>{m.body || "(no body)"}</div>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {twilioMsgHint && (
+                <div className="hint" style={{ color: "var(--warn, #b45309)", marginBottom: 12 }}>
+                  {twilioMsgHint}
+                </div>
+              )}
+              <Field label="Test phone number" hint="Your personal mobile — used only for Send test SMS.">
+                <input placeholder="+447..." value={testPhone} onChange={(e) => setTestPhone(e.target.value)} />
+              </Field>
+            </div>
+
+            <div className="card">
+              <h3>Twilio WhatsApp</h3>
+              <div className="desc">
+                Connect a WhatsApp-enabled Twilio sender. Set provider to <strong>Twilio</strong> on the WhatsApp tab to activate outbound WhatsApp.
+              </div>
+              <Field label="WhatsApp sender number" hint="E.164, e.g. +14155238886 (sandbox) or your approved WA number">
+                <input placeholder="+447..." value={g.twilio.twilio_whatsapp_from}
+                  onChange={(e) => setField("twilio", "twilio_whatsapp_from", e.target.value)} />
+              </Field>
+              <Field label="WhatsApp webhook URL" hint="Twilio Console → Messaging → WhatsApp senders / sandbox → when a message comes in.">
+                <input readOnly value={webhookUrls.twilio || `${status.public_base_url || ""}/twilio/webhooks/whatsapp`} />
+              </Field>
+              <div className="field-actions">
+                <div />
+                <button className="btn primary" disabled={saving === "twilio"} onClick={() => save("twilio")}>
+                  {saving === "twilio" ? "Saving…" : "Save WhatsApp sender"}
+                </button>
+              </div>
+            </div>
+            </>
           )}
 
           {tab === "meta" && (
@@ -460,6 +647,9 @@ export default function Settings({ toast }) {
               <h3><Icon name="brain" /> Meta WhatsApp Cloud API (direct)</h3>
               <div className="desc">
                 Connect WhatsApp directly via Meta — no Telnyx middleman. Set provider to <strong>Meta Cloud API</strong> on the WhatsApp tab.
+                When Meta asks to verify the phone number it sends an <strong>SMS code to the Twilio number</strong>, not to your mobile.
+                Open the <strong>Twilio</strong> tab → <strong>Load recent SMS</strong> and paste the code back into Meta.
+                Twilio trial accounts cannot receive that SMS until you upgrade (trial only accepts SMS from verified numbers).
               </div>
               <Field label="Permanent access token">
                 <input type="password" placeholder="EAA..." value={g.meta.meta_whatsapp_token}

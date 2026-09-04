@@ -11,7 +11,7 @@ from app.services.channels.whatsapp_telnyx_channel import WHATSAPP_CHANNEL, pars
 from app.services.telnyx_client import normalize_e164
 from app.services.whatsapp import active_webhook_url, send_message, webhook_urls, whatsapp_provider
 from app.services.whatsapp.meta_provider import test_connection as test_meta
-from app.services.whatsapp.twilio_provider import test_connection as test_twilio
+from app.services.whatsapp.twilio_provider import sms_webhook_url, test_connection as test_twilio
 from app.services import telnyx_diagnostics
 
 
@@ -120,6 +120,9 @@ def status(db: Session) -> dict[str, Any]:
         "provider": provider,
         "webhook_url": urls.get(provider, ""),
         "webhook_urls": urls,
+        "sms_enabled": runtime_config.sms_enabled(db),
+        "sms_from": runtime_config.sms_from_number(db),
+        "sms_webhook_url": sms_webhook_url(),
         "whatsapp_enabled": runtime_config.whatsapp_enabled(db),
         "from_number": runtime_config.whatsapp_from_number(db),
     }

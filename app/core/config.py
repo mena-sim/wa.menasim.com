@@ -51,10 +51,12 @@ class Settings(BaseSettings):
     # WhatsApp provider selection
     whatsapp_provider: str = "telnyx"
 
-    # Twilio WhatsApp
+    # Twilio WhatsApp + SMS
     twilio_account_sid: str = ""
     twilio_auth_token: str = ""
     twilio_whatsapp_from: str = ""
+    twilio_sms_from: str = ""
+    twilio_sms_enabled: str = "false"
 
     # Meta WhatsApp Cloud API
     meta_whatsapp_token: str = ""
