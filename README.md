@@ -72,7 +72,7 @@ See `.env.example`. Highlights:
 
 - `DEEPSEEK_API_KEY`, `DEEPSEEK_BASE_URL`, `DEEPSEEK_MODEL`
 - `WC_BASE_URL`, `WC_CONSUMER_KEY`, `WC_CONSUMER_SECRET`, and `WC_ESIM_*_META` (plugin-specific meta keys for ICCID/QR/status)
-- `TELNYX_API_KEY`, `TELNYX_WHATSAPP_FROM`, `TELNYX_MESSAGING_PROFILE_ID`, `TELNYX_WEBHOOK_PUBLIC_KEY`
+- `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_WHATSAPP_FROM`, `TWILIO_SMS_FROM`, `TWILIO_SMS_ENABLED`
 - `SMTP_*` + `ALERT_EMAIL_TO` for escalation email alerts
 - `ADMIN_PASSWORD` (admin console login) and `ENCRYPTION_KEY` (Fernet key for stored secrets;
   auto-generated to `data/secret.key` if blank)
@@ -102,6 +102,15 @@ Add a new provider by creating an adapter class and registering it in
 
 > Note: WhatsApp only allows free-form replies within 24h of the customer's last message; outside
 > that window an approved template is required.
+
+## Twilio SMS (optional)
+
+Inbound SMS uses a Twilio mobile number and does not require switching the WhatsApp provider.
+
+1. Save Account SID + Auth Token in **Settings → Twilio**.
+2. **Load numbers from Twilio** and click **Use for SMS** (or set the number’s “A message comes in”
+   webhook to `https://<host>/twilio/webhooks/sms`).
+3. Enable inbound SMS and save. Customer texts appear in Conversations as channel `sms`.
 
 ## Tests
 

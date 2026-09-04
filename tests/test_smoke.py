@@ -887,6 +887,7 @@ def test_webhook_urls_include_all_providers():
     urls = webhook_urls()
     assert "/telnyx/webhooks/messages" in urls["telnyx"]
     assert "/twilio/webhooks/whatsapp" in urls["twilio"]
+    assert "/twilio/webhooks/sms" in urls["sms"]
     assert "/meta/webhooks/whatsapp" in urls["meta"]
 
 
@@ -908,4 +909,153 @@ def test_empty_text_reply_not_voice_specific(db):
     )
     assert "voice note" not in result.reply.lower()
     assert "🎙️" not in result.reply
+
+
+def test_twilio_parse_inbound_sms():
+    from app.services.whatsapp.twilio_provider import parse_inbound
+
+    inbound = parse_inbound(
+        {
+            "From": "+447954823445",
+            "To": "+447822002099",
+            "Body": "I need my QR code",
+            "MessageSid": "SM999",
+            "NumMedia": "0",
+        }
+    )
+    assert inbound is not None
+    assert inbound.channel == "sms"
+    assert inbound.sender_id == "+447954823445"
+    assert inbound.text == "I need my QR code"
+
+
+def test_twilio_parse_inbound_ignores_status_callback():
+    from app.services.whatsapp.twilio_provider import parse_inbound
+
+    inbound = parse_inbound(
+        {
+            "From": "+447954823445",
+            "To": "+447822002099",
+            "Body": "",
+            "MessageSid": "SM888",
+            "MessageStatus": "delivered",
+            "NumMedia": "0",
+        }
+    )
+    assert inbound is None
+
+
+def test_twilio_parse_inbound_ignores_empty_sms():
+    from app.services.whatsapp.twilio_provider import parse_inbound
+
+    assert parse_inbound({"From": "+447954823445", "Body": "", "NumMedia": "0"}) is None
+
+
+def test_sms_from_number_falls_back_to_whatsapp_from(db):
+    from app.services import runtime_config
+
+    runtime_config.set_value(db, "twilio_whatsapp_from", "+15550001111")
+    runtime_config.set_value(db, "twilio_sms_from", "")
+    db.commit()
+    assert runtime_config.sms_from_number(db) == "+15550001111"
+
+    runtime_config.set_value(db, "twilio_sms_from", "+447822002099")
+    db.commit()
+    assert runtime_config.sms_from_number(db) == "+447822002099"
+
+
+def test_sms_enabled_requires_toggle_and_credentials(db):
+    from app.services import runtime_config
+
+    runtime_config.set_value(db, "twilio_account_sid", "AC123")
+    runtime_config.set_value(db, "twilio_auth_token", "secret")
+    runtime_config.set_value(db, "twilio_sms_from", "+447822002099")
+    runtime_config.set_value(db, "twilio_sms_enabled", "false")
+    db.commit()
+    assert runtime_config.sms_enabled(db) is False
+
+    runtime_config.set_value(db, "twilio_sms_enabled", "true")
+    db.commit()
+    assert runtime_config.sms_enabled(db) is True
+
+
+def test_twilio_send_sms_skipped_when_unconfigured(db):
+    from app.services.whatsapp.twilio_provider import send_sms
+
+    result = send_sms(db, "+447700900001", "hello")
+    assert result["ok"] is False
+    assert result.get("skipped") is True
+
+
+def test_configure_sms_webhook_sets_number(db, monkeypatch):
+    from app.services import runtime_config
+    from app.services.whatsapp import twilio_provider
+
+    runtime_config.set_value(db, "twilio_account_sid", "ACxxx")
+    runtime_config.set_value(db, "twilio_auth_token", "token")
+    db.commit()
+
+    class FakeResp:
+        def __init__(self, code, payload=None, text=""):
+            self.status_code = code
+            self._payload = payload or {}
+            self.text = text
+
+        def json(self):
+            return self._payload
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def get(self, url, auth=None, params=None):
+            return FakeResp(
+                200,
+                {
+                    "incoming_phone_numbers": [
+                        {
+                            "sid": "PNxxx",
+                            "phone_number": "+447822002099",
+                            "friendly_name": "menasim",
+                            "sms_url": "",
+                            "capabilities": {"sms": True, "mms": True, "voice": False},
+                        }
+                    ]
+                },
+            )
+
+        def post(self, url, data=None, auth=None):
+            assert data["SmsUrl"].endswith("/twilio/webhooks/sms")
+            assert data["SmsMethod"] == "POST"
+            return FakeResp(200, {})
+
+    monkeypatch.setattr(twilio_provider.httpx, "Client", FakeClient)
+    result = twilio_provider.configure_sms_webhook(db, sid="PNxxx")
+    assert result["ok"] is True
+    assert runtime_config.get(db, "twilio_sms_from") == "+447822002099"
+    assert runtime_config.get_bool(db, "twilio_sms_enabled") is True
+
+
+def test_sms_inbound_creates_conversation(db):
+    from app.agent import engine
+    from app.services.channels.base import InboundMessage
+    from app.services.channels.sms_channel import process_inbound
+
+    inbound = InboundMessage(
+        channel="sms",
+        sender_id="+447700900321",
+        text="hello",
+        event_id="SM-test-1",
+    )
+    result = process_inbound(db, inbound)
+    assert result["channel"] == "sms"
+    convo = engine.get_or_create_conversation(db, "sms", "+447700900321")
+    assert convo.channel == "sms"
+    assert result.get("conversation_id") == convo.id
 

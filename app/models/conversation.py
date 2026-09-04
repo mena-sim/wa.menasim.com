@@ -17,7 +17,7 @@ class Conversation(Base):
     __table_args__ = ({"sqlite_autoincrement": True},)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    channel: Mapped[str] = mapped_column(String(32), index=True)  # web | whatsapp
+    channel: Mapped[str] = mapped_column(String(32), index=True)  # web | whatsapp | sms
     sender_id: Mapped[str] = mapped_column(String(128), index=True)
     language: Mapped[str] = mapped_column(String(8), default="en")
     needs_human: Mapped[bool] = mapped_column(Boolean, default=False, index=True)

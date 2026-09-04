@@ -229,6 +229,17 @@ body.dark .msg.human { background: #2d3748; }
 .kb-list { list-style: none; padding: 0; margin: 0; }
 .kb-list li { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 12.5px; }
 .kb-list li span.muted { color: var(--muted); }
+.setup-steps {
+  margin: 0 0 16px; padding-left: 20px; color: var(--muted); font-size: 12.5px; line-height: 1.55;
+}
+.setup-steps li { margin-bottom: 6px; }
+.setup-steps strong { color: var(--text); font-weight: 600; }
+.number-list { list-style: none; padding: 0; margin: 12px 0 8px; }
+.number-list li {
+  display: flex; justify-content: space-between; align-items: center; gap: 10px;
+  padding: 10px 0; border-bottom: 1px solid var(--border); font-size: 13px;
+}
+.number-list .muted { color: var(--muted); font-size: 12px; }
 .saved-flash { color: var(--green); font-size: 12px; font-weight: 600; }
 
 /* ----- toast ----- */

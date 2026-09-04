@@ -7,12 +7,14 @@ from app.services import runtime_config
 
 
 def fetch_media(db: Session, url: str, *, timeout: float = 60.0) -> tuple[bytes, str]:
-    """Download WhatsApp media (auth depends on active provider)."""
+    """Download WhatsApp/SMS media (auth depends on active provider)."""
     from app.services.whatsapp.providers import whatsapp_provider
 
     headers: dict[str, str] = {}
+    host = (url or "").lower()
+    twilio_media = "api.twilio.com" in host or "media.twilio.com" in host
     provider = whatsapp_provider(db)
-    if provider == "twilio":
+    if provider == "twilio" or twilio_media:
         sid = runtime_config.get(db, "twilio_account_sid")
         token = runtime_config.get(db, "twilio_auth_token")
         auth = (sid, token) if sid and token else None

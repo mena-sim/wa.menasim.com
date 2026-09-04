@@ -65,8 +65,11 @@ def get_config(db: Session = Depends(get_db), _: str = Depends(admin_auth.requir
             "whatsapp_provider": runtime_config.whatsapp_provider(db),
             "woocommerce_enabled": runtime_config.woocommerce_enabled(db),
             "smtp_enabled": runtime_config.smtp_enabled(db),
+            "sms_enabled": runtime_config.sms_enabled(db),
+            "sms_from": runtime_config.sms_from_number(db),
             "webhook_url": active_webhook_url(db),
             "webhook_urls": webhook_urls(),
+            "sms_webhook_url": f"{get_settings().public_base_url.rstrip('/')}/twilio/webhooks/sms",
             "public_base_url": get_settings().public_base_url,
         },
     }
@@ -244,6 +247,51 @@ def whatsapp_test_inbound(
     )
 
 
+class TwilioConfigureSmsIn(BaseModel):
+    sid: str = ""
+    phone_number: str = ""
+
+
+class SmsTestSendIn(BaseModel):
+    to: str
+    text: str = "Test from menasim support. If you see this, Twilio SMS is working."
+
+
+@router.get("/twilio/numbers")
+def twilio_numbers(
+    db: Session = Depends(get_db), _: str = Depends(admin_auth.require_admin)
+) -> dict:
+    from app.services.whatsapp.twilio_provider import list_incoming_numbers, sms_webhook_url
+
+    result = list_incoming_numbers(db)
+    result["sms_from"] = runtime_config.sms_from_number(db)
+    result["sms_enabled"] = runtime_config.sms_enabled(db)
+    result["sms_webhook_url"] = sms_webhook_url()
+    return result
+
+
+@router.post("/twilio/configure-sms")
+def twilio_configure_sms(
+    payload: TwilioConfigureSmsIn,
+    db: Session = Depends(get_db),
+    _: str = Depends(admin_auth.require_admin),
+) -> dict:
+    from app.services.whatsapp.twilio_provider import configure_sms_webhook
+
+    return configure_sms_webhook(db, sid=payload.sid, phone_number=payload.phone_number)
+
+
+@router.post("/sms/test-send")
+def sms_test_send(
+    payload: SmsTestSendIn,
+    db: Session = Depends(get_db),
+    _: str = Depends(admin_auth.require_admin),
+) -> dict:
+    from app.services.whatsapp.twilio_provider import test_sms_send
+
+    return test_sms_send(db, payload.to, payload.text)
+
+
 # ---------------------------------------------------------------- conversations
 def _status_of(convo: Conversation) -> str:
     if convo.closed:
@@ -258,7 +306,7 @@ def _status_of(convo: Conversation) -> str:
 @router.get("/conversations")
 def list_conversations(
     filter: str = "all",
-    channel: str = "whatsapp",
+    channel: str = "all",
     q: str = "",
     db: Session = Depends(get_db),
     _: str = Depends(admin_auth.require_admin),
@@ -391,6 +439,10 @@ def manual_reply(
     delivery: dict[str, Any] = {"channel": convo.channel}
     if convo.channel == "whatsapp":
         delivery.update(send_whatsapp(db, convo.sender_id, text))
+    elif convo.channel == "sms":
+        from app.services.whatsapp.twilio_provider import send_sms
+
+        delivery.update(send_sms(db, convo.sender_id, text))
     else:
         delivery["note"] = "Web chat reply stored; the widget will show it on next poll."
     return {"ok": True, "delivery": delivery, "status": _status_of(convo)}

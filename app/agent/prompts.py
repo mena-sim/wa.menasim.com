@@ -98,6 +98,7 @@ def build_system_prompt(
     language: str,
     whatsapp: bool = False,
     *,
+    channel: str = "",
     agent_name: str = "",
     tone: str = "",
     extra_instructions: str = "",
@@ -110,9 +111,11 @@ def build_system_prompt(
     if tone:
         header += f"Preferred tone: {tone}. "
     extra = ""
-    if whatsapp:
+    mobile_channel = channel if channel in ("whatsapp", "sms") else ("whatsapp" if whatsapp else "")
+    if mobile_channel:
+        label = "SMS" if mobile_channel == "sms" else "WhatsApp"
         extra = (
-            "\n\n## Channel: WhatsApp\n"
+            f"\n\n## Channel: {label}\n"
             "Keep messages short and mobile-friendly. One or two short paragraphs max. "
             "Never send a service menu or bullet list of possible problems in your first reply. "
             "Welcome → wait for their message → help with exactly what they asked."
