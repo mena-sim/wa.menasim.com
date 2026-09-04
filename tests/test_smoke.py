@@ -979,10 +979,11 @@ def test_sms_enabled_requires_toggle_and_credentials(db):
     assert runtime_config.sms_enabled(db) is True
 
 
-def test_twilio_send_sms_skipped_when_unconfigured(db):
-    from app.services.whatsapp.twilio_provider import send_sms
+def test_twilio_send_sms_skipped_when_unconfigured(db, monkeypatch):
+    from app.services.whatsapp import twilio_provider
 
-    result = send_sms(db, "+447700900001", "hello")
+    monkeypatch.setattr(twilio_provider, "_auth", lambda _db: ("", ""))
+    result = twilio_provider.send_sms(db, "+447700900001", "hello")
     assert result["ok"] is False
     assert result.get("skipped") is True
 
@@ -1042,11 +1043,15 @@ def test_configure_sms_webhook_sets_number(db, monkeypatch):
     assert runtime_config.get_bool(db, "twilio_sms_enabled") is True
 
 
-def test_sms_inbound_creates_conversation(db):
+def test_sms_inbound_creates_conversation(db, monkeypatch):
     from app.agent import engine
     from app.services.channels.base import InboundMessage
+    from app.services.channels import sms_channel
     from app.services.channels.sms_channel import process_inbound
 
+    monkeypatch.setattr(
+        sms_channel, "send_sms", lambda *args, **kwargs: {"ok": True, "provider": "twilio-sms"}
+    )
     inbound = InboundMessage(
         channel="sms",
         sender_id="+447700900321",

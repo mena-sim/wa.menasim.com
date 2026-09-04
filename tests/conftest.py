@@ -11,6 +11,10 @@ os.environ["DEEPSEEK_API_KEY"] = ""  # keep LLM disabled for offline tests
 os.environ["WC_BASE_URL"] = ""
 os.environ["TELNYX_API_KEY"] = ""
 os.environ["TELNYX_WEBHOOK_PUBLIC_KEY"] = ""
+os.environ["TWILIO_ACCOUNT_SID"] = ""
+os.environ["TWILIO_AUTH_TOKEN"] = ""
+os.environ["TWILIO_WHATSAPP_FROM"] = ""
+os.environ["TWILIO_SMS_FROM"] = ""
 
 import pytest  # noqa: E402
 
